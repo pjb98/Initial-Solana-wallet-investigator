@@ -1,0 +1,45 @@
+openapi: 3.1.0
+info:
+  title: Solana Developer Wallet Investigator
+  version: 1.0.0
+servers:
+  - url: https://your-service.onrender.com
+paths:
+  /analyze-developer-wallet:
+    post:
+      operationId: analyzeDeveloperWallet
+      summary: Trace a suspected Solana developer wallet and related token flows
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - developer_wallet
+              properties:
+                developer_wallet:
+                  type: string
+                token_mint:
+                  type: string
+                max_side_wallet_depth:
+                  type: integer
+                  default: 2
+                  minimum: 1
+                  maximum: 3
+      responses:
+        "200":
+          description: Completed developer-wallet analysis
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: token

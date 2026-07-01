@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: solana-developer-wallet-investigator
+    env: docker
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: HELIUS_API_KEY
+        sync: false
+      - key: ACTION_SECRET
+        sync: false
+      - key: INVESTIGATOR_CACHE_PATH
+        value: /tmp/solana-investigator-cache.sqlite
+
