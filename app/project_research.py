@@ -19,24 +19,56 @@ _SESSION = requests.Session()
 _SESSION.headers.update({"User-Agent": "solana-wallet-investigator/0.1"})
 
 UTILITY_KEYWORDS = {
-    "utility",
+    "ai",
+    "agent",
+    "agents",
+    "compute",
+    "x402",
+    "zk",
+    "zks",
+    "zero knowledge",
+    "zero-knowledge",
     "protocol",
     "platform",
-    "app",
-    "dashboard",
     "sdk",
     "api",
-    "bot",
-    "engine",
-    "game",
-    "tool",
+    "infra",
+    "infrastructure",
+    "tooling",
+    "devtool",
+    "devtools",
+    "automation",
+    "indexer",
+    "oracle",
+    "payments",
+    "wallet",
+    "bridge",
+    "staking",
     "docs",
     "whitepaper",
     "litepaper",
-    "bridge",
-    "wallet",
-    "staking",
-    "payments",
+}
+
+INFRA_KEYWORDS = {
+    "ai",
+    "agent",
+    "agents",
+    "compute",
+    "x402",
+    "zk",
+    "zks",
+    "zero knowledge",
+    "zero-knowledge",
+    "sdk",
+    "api",
+    "infra",
+    "infrastructure",
+    "tooling",
+    "devtool",
+    "devtools",
+    "automation",
+    "indexer",
+    "oracle",
 }
 
 MEME_KEYWORDS = {
@@ -62,6 +94,14 @@ RESEARCH_LINK_HINTS = {
     "/api": "api",
 }
 
+TIKTOK_DOMAINS = (
+    "tiktok.com",
+    "www.tiktok.com",
+    "m.tiktok.com",
+    "vm.tiktok.com",
+    "vt.tiktok.com",
+)
+
 
 @dataclass(slots=True)
 class PageSnapshot:
@@ -86,6 +126,9 @@ class ProjectResearch:
     useful_links: list[str] = field(default_factory=list)
     score: int = 0
     verdict: str = "unclear"
+    utility_signals: int = 0
+    infra_signals: int = 0
+    meme_signals: int = 0
     reasons: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
@@ -102,6 +145,9 @@ class ProjectResearch:
             "useful_links": self.useful_links,
             "score": self.score,
             "verdict": self.verdict,
+            "utility_signals": self.utility_signals,
+            "infra_signals": self.infra_signals,
+            "meme_signals": self.meme_signals,
             "reasons": self.reasons,
         }
 
@@ -160,6 +206,23 @@ def _normalize_url(url: str | None) -> str | None:
         else:
             return None
     return url
+
+
+def _is_tiktok_url(url: str | None) -> bool:
+    if not url:
+        return False
+    low = url.lower()
+    return any(domain in low for domain in TIKTOK_DOMAINS)
+
+
+def _has_tiktok_signal(metadata: dict[str, Any], socials: dict[str, str | None]) -> bool:
+    for value in socials.values():
+        if _is_tiktok_url(value):
+            return True
+    for value in metadata.values():
+        if isinstance(value, str) and ("tiktok.com" in value.lower() or "@tiktok" in value.lower()):
+            return True
+    return False
 
 
 def _extract_from_metadata(metadata: dict[str, Any]) -> dict[str, str | None]:
@@ -378,6 +441,14 @@ def _contains_any(text: str, terms: set[str]) -> bool:
     return any(term in text for term in terms)
 
 
+def _keyword_hits(text: str, terms: set[str]) -> list[str]:
+    hits = []
+    for term in sorted(terms, key=len, reverse=True):
+        if term in text:
+            hits.append(term)
+    return hits
+
+
 def score_utility_project(
     *,
     name: str | None,
@@ -385,10 +456,13 @@ def score_utility_project(
     metadata: dict[str, Any],
     socials: dict[str, str | None],
     crawled_pages: list[PageSnapshot],
-) -> tuple[int, str, list[str], list[str]]:
+) -> tuple[int, str, list[str], list[str], int, int, int]:
     score = 0
     reasons: list[str] = []
     useful_links: list[str] = []
+    utility_signals = 0
+    infra_signals = 0
+    meme_signals = 0
 
     blob = " ".join(
         str(v) for v in [
@@ -403,6 +477,7 @@ def score_utility_project(
     if socials.get("website"):
         score += 2
         reasons.append("website link present")
+        utility_signals += 1
     if socials.get("twitter"):
         score += 1
         reasons.append("twitter/x link present")
@@ -410,40 +485,67 @@ def score_utility_project(
         score += 1
         reasons.append("telegram link present")
 
-    if _contains_any(blob, UTILITY_KEYWORDS):
+    infra_hits = _keyword_hits(blob, INFRA_KEYWORDS)
+    if infra_hits:
+        score += 3
+        reasons.append(f"metadata contains infrastructure-oriented language: {', '.join(infra_hits[:5])}")
+        utility_signals += 2
+        infra_signals += 2
+
+    blob_hits = _keyword_hits(blob, UTILITY_KEYWORDS)
+    if blob_hits:
         score += 2
-        reasons.append("metadata contains utility-oriented language")
-    if _contains_any(blob, MEME_KEYWORDS):
+        reasons.append(f"metadata contains utility-oriented language: {', '.join(blob_hits[:5])}")
+        utility_signals += 2
+    meme_hits = _keyword_hits(blob, MEME_KEYWORDS)
+    if meme_hits:
         score -= 2
-        reasons.append("metadata contains meme-oriented language")
+        reasons.append(f"metadata contains meme-oriented language: {', '.join(meme_hits[:5])}")
+        meme_signals += 1
 
     for page in crawled_pages:
         page_blob = " ".join(filter(None, [page.title or "", page.description or "", page.text or ""])).lower()
-        if _contains_any(page_blob, UTILITY_KEYWORDS):
+        page_infra_hits = _keyword_hits(page_blob, INFRA_KEYWORDS)
+        if page_infra_hits:
+            score += 2
+            reasons.append(f"infrastructure language on {page.url}: {', '.join(page_infra_hits[:5])}")
+            utility_signals += 2
+            infra_signals += 2
+        page_utility_hits = _keyword_hits(page_blob, UTILITY_KEYWORDS)
+        if page_utility_hits:
             score += 1
-            reasons.append(f"utility language on {page.url}")
-        if _contains_any(page_blob, MEME_KEYWORDS):
+            reasons.append(f"utility language on {page.url}: {', '.join(page_utility_hits[:5])}")
+            utility_signals += 2
+        page_meme_hits = _keyword_hits(page_blob, MEME_KEYWORDS)
+        if page_meme_hits:
             score -= 1
-            reasons.append(f"meme language on {page.url}")
+            reasons.append(f"meme language on {page.url}: {', '.join(page_meme_hits[:5])}")
+            meme_signals += 1
         for link in page.links:
             l = link.lower()
             if any(hint in l for hint in RESEARCH_LINK_HINTS):
                 score += 2
                 useful_links.append(link)
                 reasons.append(f"research link found: {link}")
+                utility_signals += 2
             elif "github.com" in l or "docs." in l:
                 score += 2
                 useful_links.append(link)
                 reasons.append(f"useful external link found: {link}")
+                utility_signals += 2
 
     useful_links = list(dict.fromkeys(useful_links))
-    if score >= 6:
+    if infra_signals >= 2 and meme_signals == 0 and len(useful_links) >= 1:
+        verdict = "infra_candidate"
+    elif utility_signals >= 5 and meme_signals == 0 and len(useful_links) >= 1:
         verdict = "utility_candidate"
-    elif score >= 3:
+    elif utility_signals >= 4 and meme_signals <= 1 and len(useful_links) >= 1:
         verdict = "possible_utility"
+    elif meme_signals >= 2 and utility_signals <= 2:
+        verdict = "meme_candidate"
     else:
         verdict = "unclear"
-    return score, verdict, reasons, useful_links
+    return score, verdict, reasons, useful_links, utility_signals, infra_signals, meme_signals
 
 
 def build_project_research(
@@ -462,10 +564,32 @@ def build_project_research(
         if not socials.get(key) and value:
             socials[key] = value
 
+    if _has_tiktok_signal(token_metadata, socials):
+        return ProjectResearch(
+            mint=mint,
+            symbol=symbol,
+            name=name,
+            uri=uri,
+            creator=creator,
+            metadata=token_metadata,
+            socials=socials,
+            seed_urls=[],
+            crawled_pages=[],
+            useful_links=[],
+            score=0,
+            verdict="tiktok_excluded",
+            utility_signals=0,
+            infra_signals=0,
+            meme_signals=0,
+            reasons=["tiktok social or website detected; excluded from analysis"],
+        )
+
     seed_urls: list[str] = []
     for key in ("website", "twitter", "telegram"):
         url = socials.get(key)
         if url:
+            if _is_tiktok_url(url):
+                continue
             seed_urls.append(url)
 
     profile_pages: list[PageSnapshot] = []
@@ -477,7 +601,7 @@ def build_project_research(
                 if link not in seed_urls:
                     seed_urls.append(link)
     crawled_pages = _dedupe_pages(profile_pages + crawl_project_sites(seed_urls))
-    score, verdict, reasons, useful_links = score_utility_project(
+    score, verdict, reasons, useful_links, utility_signals, infra_signals, meme_signals = score_utility_project(
         name=name,
         symbol=symbol,
         metadata=token_metadata,
@@ -498,5 +622,8 @@ def build_project_research(
         useful_links=useful_links,
         score=score,
         verdict=verdict,
+        utility_signals=utility_signals,
+        infra_signals=infra_signals,
+        meme_signals=meme_signals,
         reasons=reasons,
     )

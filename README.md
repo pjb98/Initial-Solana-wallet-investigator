@@ -135,3 +135,34 @@ If you want a single command:
 ```bash
 ./run_utility_watch.sh
 ```
+
+## Dashboard
+
+The watcher stores scraped tokens in `data/utility_watch.sqlite`. A read-only dashboard is now available from the same FastAPI app.
+
+VPS service:
+
+```bash
+systemctl status solana-wallet-investigator-dashboard.service
+```
+
+Local URL on the VPS:
+
+```text
+http://127.0.0.1:8010/dashboard
+```
+
+If the VPS port is reachable from your browser, use:
+
+```text
+http://<your-vps-ip>:8010/dashboard
+```
+
+The page is public, but the data APIs use the same bearer token as the GPT Action. Paste that token into the dashboard login box.
+
+Useful endpoints:
+
+- `/dashboard`
+- `/dashboard/api/tokens`
+- `/dashboard/api/tokens/{mint}`
+- `/reports/<filename>` for generated report files

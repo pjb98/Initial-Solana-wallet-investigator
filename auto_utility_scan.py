@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS utility_tokens (
     report_path TEXT,
     json_path TEXT,
     status TEXT NOT NULL,
+    completed_at TEXT,
     metadata_json TEXT,
     research_json TEXT,
     analysis_json TEXT,
@@ -102,6 +103,9 @@ def _init_db() -> None:
     con = _connect()
     try:
         con.executescript(SCHEMA)
+        cols = {row["name"] for row in con.execute("PRAGMA table_info(utility_tokens)").fetchall()}
+        if "completed_at" not in cols:
+            con.execute("ALTER TABLE utility_tokens ADD COLUMN completed_at TEXT")
     finally:
         con.close()
 
@@ -109,14 +113,16 @@ def _init_db() -> None:
 def _upsert_token(con: sqlite3.Connection, token: ObservedToken, *, status: str, score: int | None = None,
                   verdict: str | None = None, report_path: str | None = None, json_path: str | None = None,
                   metadata_json: str | None = None, research_json: str | None = None,
-                  analysis_json: str | None = None, last_error: str | None = None) -> None:
+                  analysis_json: str | None = None, last_error: str | None = None,
+                  completed_at: str | None = None) -> None:
+    completed_at = completed_at or _now()
     con.execute(
         """
         INSERT INTO utility_tokens(
             mint, name, symbol, creator, uri, discovered_at, score, verdict, report_path, json_path,
-            status, metadata_json, research_json, analysis_json, last_error
+            status, completed_at, metadata_json, research_json, analysis_json, last_error
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(mint) DO UPDATE SET
             name=excluded.name,
             symbol=excluded.symbol,
@@ -127,6 +133,7 @@ def _upsert_token(con: sqlite3.Connection, token: ObservedToken, *, status: str,
             report_path=COALESCE(excluded.report_path, utility_tokens.report_path),
             json_path=COALESCE(excluded.json_path, utility_tokens.json_path),
             status=excluded.status,
+            completed_at=COALESCE(excluded.completed_at, utility_tokens.completed_at),
             metadata_json=COALESCE(excluded.metadata_json, utility_tokens.metadata_json),
             research_json=COALESCE(excluded.research_json, utility_tokens.research_json),
             analysis_json=COALESCE(excluded.analysis_json, utility_tokens.analysis_json),
@@ -144,6 +151,7 @@ def _upsert_token(con: sqlite3.Connection, token: ObservedToken, *, status: str,
             report_path,
             json_path,
             status,
+            completed_at,
             metadata_json,
             research_json,
             analysis_json,
@@ -202,7 +210,7 @@ def _analysis_for_token(
         token_metadata=metadata,
     )
 
-    if research.score < SETTINGS.utility_score_threshold:
+    if research.verdict not in {"utility_candidate", "infra_candidate"}:
         return {
             "token": token,
             "research": research,
@@ -235,6 +243,9 @@ def _analysis_for_token(
         "score_threshold": SETTINGS.utility_score_threshold,
         "score": research.score,
         "verdict": research.verdict,
+        "utility_signals": research.utility_signals,
+        "infra_signals": research.infra_signals,
+        "meme_signals": research.meme_signals,
         "generated_at": _now(),
     }
     return {"token": token, "research": research, "report": report}
@@ -265,15 +276,6 @@ async def _handle_token(helius: HeliusClient, con: sqlite3.Connection, token: Ob
         research = result["research"]
         report = result["report"]
         if report is None:
-            _upsert_token(
-                con,
-                token,
-                status="scored",
-                score=research.score,
-                verdict=research.verdict,
-                metadata_json=json.dumps(metadata),
-                research_json=json.dumps(research.as_dict()),
-            )
             print(
                 f"[skip] {token.symbol or token.name or token.mint[:8]} "
                 f"score={research.score} verdict={research.verdict}"
@@ -291,6 +293,7 @@ async def _handle_token(helius: HeliusClient, con: sqlite3.Connection, token: Ob
             metadata_json=json.dumps(metadata),
             research_json=json.dumps(research.as_dict()),
             analysis_json=json.dumps(report),
+            completed_at=_now(),
         )
     except Exception as exc:
         _upsert_token(
@@ -299,6 +302,7 @@ async def _handle_token(helius: HeliusClient, con: sqlite3.Connection, token: Ob
             status="failed",
             metadata_json=json.dumps(metadata),
             last_error=str(exc),
+            completed_at=_now(),
         )
         print(f"[error] {token.mint}: {str(exc)[:140]}")
 
