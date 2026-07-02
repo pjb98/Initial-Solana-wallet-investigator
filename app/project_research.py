@@ -102,6 +102,30 @@ TIKTOK_DOMAINS = (
     "vt.tiktok.com",
 )
 
+BLOG_PATH_HINTS = (
+    r"/\d{4}/\d{2}/\d{2}/",
+    r"/blog/",
+    r"/posts?/",
+    r"/news/",
+    r"/article/",
+)
+
+BLOG_TEXT_HINTS = {
+    "blog",
+    "article",
+    "opinion",
+    "essay",
+    "post",
+    "free speech",
+    "satire",
+    "joke",
+    "humor",
+    "memes",
+    "hamster",
+    "hamsters",
+    "pop culture",
+}
+
 
 @dataclass(slots=True)
 class PageSnapshot:
@@ -223,6 +247,13 @@ def _has_tiktok_signal(metadata: dict[str, Any], socials: dict[str, str | None])
         if isinstance(value, str) and ("tiktok.com" in value.lower() or "@tiktok" in value.lower()):
             return True
     return False
+
+
+def _is_blog_style_url(url: str | None) -> bool:
+    if not url:
+        return False
+    low = url.lower()
+    return any(re.search(pattern, low) for pattern in BLOG_PATH_HINTS)
 
 
 def _extract_from_metadata(metadata: dict[str, Any]) -> dict[str, str | None]:
@@ -505,6 +536,14 @@ def score_utility_project(
 
     for page in crawled_pages:
         page_blob = " ".join(filter(None, [page.title or "", page.description or "", page.text or ""])).lower()
+        if _is_blog_style_url(page.url):
+            score -= 2
+            reasons.append(f"blog/article-style page on {page.url}")
+            meme_signals += 1
+        if _contains_any(page_blob, BLOG_TEXT_HINTS):
+            score -= 1
+            reasons.append(f"blog/article language on {page.url}")
+            meme_signals += 1
         page_infra_hits = _keyword_hits(page_blob, INFRA_KEYWORDS)
         if page_infra_hits:
             score += 2
