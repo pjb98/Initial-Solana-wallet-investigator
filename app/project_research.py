@@ -82,6 +82,45 @@ MEME_KEYWORDS = {
     "frog",
     "meme",
     "shib",
+    "hamster",
+    "hamsters",
+    "bonk",
+    "chad",
+    "degen",
+    "rizz",
+    "alpha",
+    "sigma",
+    "snoop",
+    "elon",
+    "vibez",
+    "vibes",
+    "joke",
+    "funny",
+    "comedy",
+    "viral",
+    "trend",
+    "trending",
+    "cute",
+    "animal",
+    "animals",
+    "dog",
+    "dogs",
+    "shark",
+    "sharks",
+    "bear",
+    "bears",
+    "bull",
+    "bulls",
+    "monkey",
+    "monkeys",
+    "rabbit",
+    "rabbits",
+    "hamster",
+    "hamsters",
+    "pop culture",
+    "celeb",
+    "celebrity",
+    "celebrities",
 }
 
 RESEARCH_LINK_HINTS = {
@@ -150,6 +189,8 @@ class ProjectResearch:
     useful_links: list[str] = field(default_factory=list)
     score: int = 0
     verdict: str = "unclear"
+    contract_found: bool = False
+    contract_evidence: str | None = None
     utility_signals: int = 0
     infra_signals: int = 0
     meme_signals: int = 0
@@ -169,6 +210,8 @@ class ProjectResearch:
             "useful_links": self.useful_links,
             "score": self.score,
             "verdict": self.verdict,
+            "contract_found": self.contract_found,
+            "contract_evidence": self.contract_evidence,
             "utility_signals": self.utility_signals,
             "infra_signals": self.infra_signals,
             "meme_signals": self.meme_signals,
@@ -249,11 +292,35 @@ def _has_tiktok_signal(metadata: dict[str, Any], socials: dict[str, str | None])
     return False
 
 
+def _host_of(url: str | None) -> str | None:
+    if not url:
+        return None
+    parsed = urlparse(url)
+    return parsed.netloc.lower() if parsed.netloc else None
+
+
 def _is_blog_style_url(url: str | None) -> bool:
     if not url:
         return False
     low = url.lower()
     return any(re.search(pattern, low) for pattern in BLOG_PATH_HINTS)
+
+
+def _find_contract_evidence(
+    mint: str,
+    website: str | None,
+    crawled_pages: list[PageSnapshot],
+) -> tuple[bool, str | None]:
+    site_host = _host_of(website)
+    for page in crawled_pages:
+        if site_host and _host_of(page.url) != site_host:
+            continue
+        blob = " ".join(filter(None, [page.title or "", page.description or "", page.text or "", " ".join(page.links)]))
+        if mint in blob:
+            return True, page.url
+        if re.search(rf"\b(?:contract|ca|mint)\b[:\s#-]*{re.escape(mint)}\b", blob, flags=re.I):
+            return True, page.url
+    return False, None
 
 
 def _extract_from_metadata(metadata: dict[str, Any]) -> dict[str, str | None]:
@@ -580,7 +647,7 @@ def score_utility_project(
         verdict = "utility_candidate"
     elif utility_signals >= 4 and meme_signals <= 1 and len(useful_links) >= 1:
         verdict = "possible_utility"
-    elif meme_signals >= 2 and utility_signals <= 2:
+    elif meme_signals >= 1 and infra_signals < 2 and utility_signals <= 4:
         verdict = "meme_candidate"
     else:
         verdict = "unclear"
@@ -617,6 +684,7 @@ def build_project_research(
             useful_links=[],
             score=0,
             verdict="tiktok_excluded",
+            contract_found=False,
             utility_signals=0,
             infra_signals=0,
             meme_signals=0,
@@ -640,6 +708,28 @@ def build_project_research(
                 if link not in seed_urls:
                     seed_urls.append(link)
     crawled_pages = _dedupe_pages(profile_pages + crawl_project_sites(seed_urls))
+    contract_found, contract_evidence = _find_contract_evidence(mint, socials.get("website"), crawled_pages)
+    if not contract_found:
+        return ProjectResearch(
+            mint=mint,
+            symbol=symbol,
+            name=name,
+            uri=uri,
+            creator=creator,
+            metadata=token_metadata,
+            socials=socials,
+            seed_urls=seed_urls,
+            crawled_pages=crawled_pages,
+            useful_links=[],
+            score=0,
+            verdict="contract_not_found",
+            contract_found=False,
+            contract_evidence=None,
+            utility_signals=0,
+            infra_signals=0,
+            meme_signals=0,
+            reasons=["token contract address was not found on the website"],
+        )
     score, verdict, reasons, useful_links, utility_signals, infra_signals, meme_signals = score_utility_project(
         name=name,
         symbol=symbol,
@@ -661,6 +751,8 @@ def build_project_research(
         useful_links=useful_links,
         score=score,
         verdict=verdict,
+        contract_found=contract_found,
+        contract_evidence=contract_evidence,
         utility_signals=utility_signals,
         infra_signals=infra_signals,
         meme_signals=meme_signals,

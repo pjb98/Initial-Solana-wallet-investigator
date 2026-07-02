@@ -68,12 +68,16 @@ def list_tokens(limit: int = 200) -> list[dict[str, Any]]:
                     "report_url": f"/reports/{report_name}" if report_name else None,
                     "json_path": row["json_path"],
                     "last_error": row["last_error"],
+                    "contract_found": research.get("contract_found"),
+                    "contract_evidence": research.get("contract_evidence"),
                     "website": socials.get("website"),
                     "twitter": socials.get("twitter"),
                     "telegram": socials.get("telegram"),
                     "useful_links": research.get("useful_links") or [],
                     "automation": analysis.get("automation") or {},
                     "summary": analysis.get("summary") or {},
+                    "contract_found": research.get("contract_found"),
+                    "contract_evidence": research.get("contract_evidence"),
                 }
             )
         return tokens
@@ -124,6 +128,8 @@ def get_token(mint: str) -> dict[str, Any] | None:
             "report_url": f"/reports/{report_name}" if report_name else None,
             "json_path": row["json_path"],
             "last_error": row["last_error"],
+            "contract_found": research.get("contract_found"),
+            "contract_evidence": research.get("contract_evidence"),
             "metadata": metadata,
             "research": research,
             "analysis": analysis,

@@ -210,7 +210,7 @@ def _analysis_for_token(
         token_metadata=metadata,
     )
 
-    if research.verdict not in {"utility_candidate", "infra_candidate"}:
+    if not research.contract_found or research.verdict not in {"utility_candidate", "infra_candidate"}:
         return {
             "token": token,
             "research": research,
@@ -246,6 +246,8 @@ def _analysis_for_token(
         "utility_signals": research.utility_signals,
         "infra_signals": research.infra_signals,
         "meme_signals": research.meme_signals,
+        "contract_found": research.contract_found,
+        "contract_evidence": research.contract_evidence,
         "generated_at": _now(),
     }
     return {"token": token, "research": research, "report": report}

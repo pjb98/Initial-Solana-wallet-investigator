@@ -196,7 +196,7 @@ _DASHBOARD_HTML = """<!doctype html>
     }
 
     function verdictBadge(value) {
-      const cls = value === 'utility_candidate' || value === 'infra_candidate' ? 'ok' : value === 'possible_utility' ? 'warn' : '';
+      const cls = value === 'utility_candidate' || value === 'infra_candidate' ? 'ok' : value === 'possible_utility' ? 'warn' : value === 'contract_not_found' || value === 'tiktok_excluded' || value === 'meme_candidate' ? 'bad' : '';
       return `<span class="verdict ${cls}">${esc(value || 'unclear')}</span>`;
     }
 
@@ -238,6 +238,7 @@ _DASHBOARD_HTML = """<!doctype html>
           <td>${esc(row.score ?? '')}</td>
           <td>${esc(row.discovered_at || '')}</td>
           <td>${esc(row.completed_at || '')}</td>
+          <td>${row.contract_found ? `<span class="ok">found</span>` : `<span class="bad">missing</span>`}</td>
           <td>${row.report_url ? `<a href="${esc(row.report_url)}" target="_blank">report</a>` : '<span class="muted">none</span>'}</td>
         </tr>
       `).join('');
@@ -251,10 +252,11 @@ _DASHBOARD_HTML = """<!doctype html>
               <th>Score</th>
               <th>Discovered</th>
               <th>Completed</th>
+              <th>Contract</th>
               <th>Report</th>
             </tr>
           </thead>
-          <tbody>${rows || '<tr><td colspan="7" class="muted">No scraped tokens yet.</td></tr>'}</tbody>
+          <tbody>${rows || '<tr><td colspan="8" class="muted">No scraped tokens yet.</td></tr>'}</tbody>
         </table>
       `;
       document.querySelectorAll('tr[data-mint]').forEach((tr) => tr.addEventListener('click', () => loadDetail(tr.dataset.mint)));
@@ -277,6 +279,7 @@ _DASHBOARD_HTML = """<!doctype html>
           <div>Score</div><div>${esc(data.score ?? '')}</div>
           <div>Discovered</div><div>${esc(data.discovered_at || '')}</div>
           <div>Completed</div><div>${esc(data.completed_at || '')}</div>
+          <div>Contract</div><div>${data.contract_found ? `<span class="ok">found</span> <span class="muted">${esc(data.contract_evidence || '')}</span>` : '<span class="bad">missing</span>'}</div>
           <div>URI</div><div><a href="${esc(data.uri || '#')}" target="_blank">${esc(data.uri || '')}</a></div>
         `;
         const links = [];
