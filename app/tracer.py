@@ -189,6 +189,11 @@ class TraceEngine:
         if token_mint:
             launch_time = self._estimate_launch_time(token_mint)
 
+        # Mint-scoped investigations are typically for older tokens, so scan much
+        # deeper than the lightweight default used for blind wallet inference.
+        scan_pages = max(SETTINGS.max_pages, 12) if token_mint else SETTINGS.max_pages
+        scan_limit = 1000 if token_mint else SETTINGS.page_limit
+
         cutoff = None
         if launch_time:
             cutoff = int((launch_time - timedelta(hours=SETTINGS.launch_window_hours)).timestamp())
@@ -199,12 +204,21 @@ class TraceEngine:
         target_events: list[dict[str, Any]] = []
         truncated = False
         wallet_analyses: dict[str, WalletAnalysis] = {}
+        tx_cache: dict[str, dict[str, Any] | None] = {}
 
         def get_analysis(wallet: str) -> WalletAnalysis:
             cached = wallet_analyses.get(wallet)
             if cached is not None:
                 return cached
-            analysis = self._analyze_wallet(wallet, token_mint=token_mint, cutoff=cutoff)
+            is_seed = wallet == developer_wallet
+            analysis = self._analyze_wallet(
+                wallet,
+                token_mint=token_mint,
+                cutoff=cutoff,
+                max_pages=scan_pages if is_seed else min(scan_pages, 4),
+                page_limit=scan_limit,
+                tx_cache=tx_cache,
+            )
             wallet_analyses[wallet] = analysis
             return analysis
 
@@ -236,7 +250,15 @@ class TraceEngine:
             if not frontier:
                 break
 
-        cluster_events = self._analyze_cluster_transactions(cluster, token_mint, cutoff=cutoff, analyses=wallet_analyses)
+        cluster_events = self._analyze_cluster_transactions(
+            cluster,
+            token_mint,
+            cutoff=cutoff,
+            analyses=wallet_analyses,
+            max_pages=scan_pages,
+            page_limit=scan_limit,
+            tx_cache=tx_cache,
+        )
         target_events.extend(cluster_events["events"])
         truncated = truncated or cluster_events["truncated"]
         wallet_results.update(cluster_events["wallet_results"])
@@ -320,18 +342,26 @@ class TraceEngine:
         *,
         token_mint: str | None,
         cutoff: int | None,
+        max_pages: int | None = None,
+        page_limit: int | None = None,
+        tx_cache: dict[str, dict[str, Any] | None] | None = None,
     ) -> WalletAnalysis:
         sigs, truncated = self.helius.paginate_signatures(
             wallet,
             until_block_time=cutoff,
-            max_pages=SETTINGS.max_pages,
-            limit=SETTINGS.page_limit,
+            max_pages=max_pages or SETTINGS.max_pages,
+            limit=page_limit or SETTINGS.page_limit,
         )
         events: list[dict[str, Any]] = []
         for sig in sigs:
             if sig.err:
                 continue
-            tx = self.helius.get_transaction(sig.signature)
+            if tx_cache is not None and sig.signature in tx_cache:
+                tx = tx_cache[sig.signature]
+            else:
+                tx = self.helius.get_transaction(sig.signature)
+                if tx_cache is not None:
+                    tx_cache[sig.signature] = tx
             if not tx or not tx.get("meta"):
                 continue
             if token_mint:
@@ -455,6 +485,9 @@ class TraceEngine:
         *,
         cutoff: int | None,
         analyses: dict[str, WalletAnalysis] | None = None,
+        max_pages: int | None = None,
+        page_limit: int | None = None,
+        tx_cache: dict[str, dict[str, Any] | None] | None = None,
     ) -> dict[str, Any]:
         wallet_results: dict[str, dict[str, Any]] = {}
         events: list[dict[str, Any]] = []
@@ -462,7 +495,14 @@ class TraceEngine:
         for wallet in sorted(cluster):
             analysis = analyses.get(wallet) if analyses else None
             if analysis is None:
-                analysis = self._analyze_wallet(wallet, token_mint=token_mint, cutoff=cutoff)
+                analysis = self._analyze_wallet(
+                    wallet,
+                    token_mint=token_mint,
+                    cutoff=cutoff,
+                    max_pages=max_pages,
+                    page_limit=page_limit,
+                    tx_cache=tx_cache,
+                )
                 if analyses is not None:
                     analyses[wallet] = analysis
             wallet_results[wallet] = self._wallet_summary(analysis, token_mint)
