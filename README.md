@@ -48,6 +48,7 @@ The Helius key stays server-side in `.env` or process environment variables and 
 
 Use [`openapi.yaml`](./openapi.yaml) directly in the GPT Actions editor.
 For the GPT Action, use only `POST /analyze-developer-wallet`.
+Paste the raw YAML content, not a fenced code block.
 
 ## Render deploy
 

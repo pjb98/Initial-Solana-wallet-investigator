@@ -16,6 +16,11 @@ TOKEN_PROGRAMS = {
     "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
 }
 
+IGNORED_MINTS = {
+    "So11111111111111111111111111111111111111112",
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+}
+
 TRANSFER_OK_PROGRAMS = TOKEN_PROGRAMS | {
     "11111111111111111111111111111111",
     "ComputeBudget111111111111111111111111111111",
@@ -577,10 +582,14 @@ class TraceEngine:
             for row in (tx.get("meta") or {}).get("postTokenBalances") or []:
                 mint = row.get("mint")
                 owner = row.get("owner")
+                if mint in IGNORED_MINTS:
+                    continue
                 if mint and owner == developer_wallet:
                     scores[mint] += 3
                 elif mint:
                     scores[mint] += 1
+        for ignored in IGNORED_MINTS:
+            scores.pop(ignored, None)
         return scores.most_common(1)[0][0] if scores else None
 
     def _estimate_launch_time(self, mint: str) -> datetime | None:

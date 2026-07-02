@@ -3,7 +3,7 @@ info:
   title: Solana Developer Wallet Investigator
   version: 1.0.0
 servers:
-  - url: https://your-service.onrender.com
+  - url: https://initial-solana-wallet-investigator.onrender.com
 paths:
   /analyze-developer-wallet:
     post:
@@ -16,30 +16,35 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required:
-                - developer_wallet
-              properties:
-                developer_wallet:
-                  type: string
-                token_mint:
-                  type: string
-                max_side_wallet_depth:
-                  type: integer
-                  default: 2
-                  minimum: 1
-                  maximum: 3
+              $ref: '#/components/schemas/AnalyzeRequest'
       responses:
-        "200":
+        '200':
           description: Completed developer-wallet analysis
           content:
             application/json:
               schema:
                 type: object
+                properties: {}
                 additionalProperties: true
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: token
+  schemas:
+    AnalyzeRequest:
+      type: object
+      required:
+        - developer_wallet
+      properties:
+        developer_wallet:
+          type: string
+          description: Suspected developer wallet public key
+        token_mint:
+          type: string
+          description: Optional token mint to scope the investigation
+        max_side_wallet_depth:
+          type: integer
+          default: 2
+          minimum: 1
+          maximum: 3
