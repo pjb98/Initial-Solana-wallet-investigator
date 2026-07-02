@@ -30,6 +30,16 @@ TRANSFER_OK_PROGRAMS = TOKEN_PROGRAMS | {
     "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
 }
 
+VAULT_PROGRAM_HINTS = (
+    "vest",
+    "vault",
+    "lock",
+    "locker",
+    "escrow",
+    "stream",
+    "cliff",
+)
+
 ACTION_VERSION = "1.0.0"
 
 
@@ -107,6 +117,115 @@ def _tx_time(tx: dict[str, Any]) -> datetime | None:
 
 def _classify_transfer_only(tx: dict[str, Any]) -> bool:
     return _program_ids(tx).issubset(TRANSFER_OK_PROGRAMS)
+
+
+def _vault_programs(tx: dict[str, Any]) -> set[str]:
+    hits: set[str] = set()
+    for pid in _program_ids(tx):
+        low = pid.lower()
+        if any(hint in low for hint in VAULT_PROGRAM_HINTS):
+            hits.add(pid)
+    return hits
+
+
+def _looks_like_vault_deposit(tx: dict[str, Any], transfers: list[dict[str, Any]], owner_map: dict[str, str], mint: str) -> bool:
+    if _vault_programs(tx):
+        return True
+    if not transfers:
+        return False
+    for transfer in transfers:
+        if transfer.get("kind") != "spl_transfer" or transfer.get("mint") != mint:
+            continue
+        destination = transfer.get("destination")
+        if not destination:
+            continue
+        owner = owner_map.get(destination)
+        if not owner:
+            return True
+        if not _is_pubkey(owner):
+            return True
+        # Treat likely program-derived owners as vault/escrow destinations.
+        if owner.startswith("111111") or owner.startswith("AToken"):
+            return True
+    return False
+
+
+def _parsed_token_transfers(tx: dict[str, Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    msg = ((tx.get("transaction") or {}).get("message") or {})
+    for ix in msg.get("instructions") or []:
+        parsed = ix.get("parsed")
+        if not isinstance(parsed, dict):
+            continue
+        info = parsed.get("info") or {}
+        itype = parsed.get("type")
+        if itype in {"transfer", "transferChecked"}:
+            mint = info.get("mint")
+            if mint:
+                out.append(
+                    {
+                        "kind": "spl_transfer",
+                        "mint": mint,
+                        "source": info.get("source"),
+                        "destination": info.get("destination"),
+                        "authority": info.get("authority"),
+                        "amount": float(info.get("tokenAmount", {}).get("uiAmount") or info.get("amount") or 0),
+                    }
+                )
+        if itype in {"transfer", "transferChecked"} and info.get("lamports") is not None:
+            out.append(
+                {
+                    "kind": "sol_transfer",
+                    "mint": "So11111111111111111111111111111111111111112",
+                    "source": info.get("source"),
+                    "destination": info.get("destination"),
+                    "authority": info.get("authority"),
+                    "amount": float(info.get("lamports") or 0) / 1_000_000_000,
+                }
+            )
+    return out
+
+
+def _token_account_owner_map(tx: dict[str, Any], mint: str) -> dict[str, str]:
+    keys = _account_keys(tx)
+    owners: dict[str, str] = {}
+    meta = tx.get("meta") or {}
+    for bucket in (meta.get("preTokenBalances") or [], meta.get("postTokenBalances") or []):
+        for row in bucket:
+            if row.get("mint") != mint:
+                continue
+            owner = row.get("owner")
+            if not owner:
+                continue
+            account = row.get("tokenAccount") or row.get("address")
+            idx = row.get("accountIndex")
+            if not account and isinstance(idx, int) and 0 <= idx < len(keys):
+                account = keys[idx]
+            if account:
+                owners[str(account)] = str(owner)
+    return owners
+
+
+def _transfer_counterparty(
+    wallet: str,
+    token_delta: float,
+    transfers: list[dict[str, Any]],
+    mint: str,
+    owner_map: dict[str, str],
+) -> str | None:
+    if token_delta < 0:
+        for transfer in transfers:
+            if transfer.get("kind") == "spl_transfer" and transfer.get("mint") == mint:
+                destination = transfer.get("destination")
+                if destination and destination != wallet:
+                    return owner_map.get(destination, destination)
+    elif token_delta > 0:
+        for transfer in transfers:
+            if transfer.get("kind") == "spl_transfer" and transfer.get("mint") == mint:
+                source = transfer.get("source")
+                if source and source != wallet:
+                    return owner_map.get(source, source)
+    return None
 
 
 def _top_positive_owner(deltas: dict[str, float]) -> tuple[str | None, float]:
@@ -387,6 +506,9 @@ class TraceEngine:
             return events
         sol_deltas = _sol_deltas(tx)
         transfer_only = _classify_transfer_only(tx)
+        parsed_transfers = _parsed_token_transfers(tx)
+        owner_map = _token_account_owner_map(tx, mint)
+        vault_deposit = _looks_like_vault_deposit(tx, parsed_transfers, owner_map, mint)
         tx_time = _tx_time(tx)
         top_pos_owner, top_pos_delta = _top_positive_owner(owner_deltas)
         top_neg_owner, top_neg_delta = _top_negative_owner(owner_deltas)
@@ -420,11 +542,17 @@ class TraceEngine:
                         "relationship_confidence": "high" if top_neg_owner == wallet else "medium",
                     }
                 )
-            elif transfer_only and token_delta != 0:
-                other = top_pos_owner if token_delta < 0 else top_neg_owner
+            elif token_delta != 0 and (
+                transfer_only
+                or any(t.get("kind") == "spl_transfer" and t.get("mint") == mint for t in parsed_transfers)
+            ):
+                other = _transfer_counterparty(wallet, token_delta, parsed_transfers, mint, owner_map)
+                if not other:
+                    other = top_pos_owner if token_delta < 0 else top_neg_owner
+                kind = "vault_deposit" if token_delta < 0 and vault_deposit else ("transfer_out" if token_delta < 0 else "transfer_in")
                 events.append(
                     {
-                        "kind": "transfer_out" if token_delta < 0 else "transfer_in",
+                        "kind": kind,
                         "wallet": wallet,
                         "owner": wallet,
                         "other_wallet": other,
@@ -437,23 +565,24 @@ class TraceEngine:
                     }
                 )
         # Track direct wallet-to-wallet transfers even if the target wallet is not the signer.
-        if transfer_only:
+        if (transfer_only or any(t.get("kind") == "spl_transfer" and t.get("mint") == mint for t in parsed_transfers)) and not vault_deposit:
             for owner, delta in owner_deltas.items():
                 if owner == wallet or delta == 0:
                     continue
                 if delta > 0:
+                    source = _transfer_counterparty(owner, delta, parsed_transfers, mint, owner_map)
                     events.append(
                         {
                             "kind": "transfer_in",
                             "wallet": owner,
                             "owner": owner,
-                            "other_wallet": wallet if wallet != owner else None,
+                            "other_wallet": source or (wallet if wallet != owner else None),
                             "mint": mint,
                             "signature": signature,
                             "timestamp": tx_time.isoformat() if tx_time else None,
                             "token_amount": delta,
                             "sol_amount": sol_deltas.get(owner, 0.0),
-                            "relationship_confidence": "medium",
+                            "relationship_confidence": "high" if source else "medium",
                         }
                     )
         return events

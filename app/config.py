@@ -16,6 +16,8 @@ except ImportError:  # pragma: no cover - optional dependency
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
+PUMPPORTAL_WS_URL = "wss://pumpportal.fun/api/data"
+
 
 def _env(name: str, default: str | None = None) -> str | None:
     value = os.getenv(name)
@@ -33,6 +35,7 @@ def _bool(name: str, default: bool = False) -> bool:
 class Settings:
     helius_api_key: str | None = _env("HELIUS_API_KEY")
     action_secret: str | None = _env("ACTION_SECRET")
+    pumpportal_api_key: str | None = _env("PUMPPORTAL_API_KEY")
     cache_path: Path = Path(_env("INVESTIGATOR_CACHE_PATH", "/tmp/solana-investigator-cache.sqlite") or "/tmp/solana-investigator-cache.sqlite")
     request_timeout: float = float(_env("INVESTIGATOR_REQUEST_TIMEOUT", "20") or 20)
     max_pages: int = int(_env("INVESTIGATOR_MAX_PAGES", "3") or 3)
@@ -41,6 +44,11 @@ class Settings:
     truncation_signature_cap: int = int(_env("INVESTIGATOR_SIGNATURE_CAP", "6000") or 6000)
     cache_ttl_seconds: int = int(_env("INVESTIGATOR_CACHE_TTL_SECONDS", "86400") or 86400)
     allow_public_openapi: bool = _bool("INVESTIGATOR_ALLOW_PUBLIC_OPENAPI", True)
+    utility_score_threshold: int = int(_env("UTILITY_SCORE_THRESHOLD", "6") or 6)
+    utility_crawl_pages: int = int(_env("UTILITY_CRAWL_PAGES", "8") or 8)
+    utility_crawl_depth: int = int(_env("UTILITY_CRAWL_DEPTH", "1") or 1)
+    utility_analysis_depth: int = int(_env("UTILITY_ANALYSIS_DEPTH", "3") or 3)
+    utility_analysis_pages: int = int(_env("UTILITY_ANALYSIS_PAGES", "12") or 12)
 
 
 SETTINGS = Settings()
@@ -51,6 +59,12 @@ HELIUS_RPC_URL = (
     if SETTINGS.helius_api_key
     else None
 )
+
+
+def pumpportal_ws_url() -> str:
+    if SETTINGS.pumpportal_api_key:
+        return f"{PUMPPORTAL_WS_URL}?api-key={SETTINGS.pumpportal_api_key}"
+    return PUMPPORTAL_WS_URL
 
 
 BASE58_PUBLIC_KEY = r"^[1-9A-HJ-NP-Za-km-z]{32,44}$"

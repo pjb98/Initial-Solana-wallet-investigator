@@ -1,5 +1,6 @@
 .env
 .venv/
+venv/
 __pycache__/
 *.pyc
 reports/
@@ -7,4 +8,3 @@ inputs/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
-

@@ -45,6 +45,16 @@ TRANSFER_OK_PROGRAMS = {
     "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
 }
 
+VAULT_PROGRAM_HINTS = (
+    "vest",
+    "vault",
+    "lock",
+    "locker",
+    "escrow",
+    "stream",
+    "cliff",
+)
+
 
 def is_pubkey(value: str | None) -> bool:
     return bool(value and PUBKEY_RE.match(value))
@@ -88,6 +98,92 @@ def program_ids(tx: dict[str, Any]) -> set[str]:
 
 def transfer_only(tx: dict[str, Any]) -> bool:
     return program_ids(tx).issubset(TRANSFER_OK_PROGRAMS)
+
+
+def vault_programs(tx: dict[str, Any]) -> set[str]:
+    hits: set[str] = set()
+    for pid in program_ids(tx):
+        low = pid.lower()
+        if any(hint in low for hint in VAULT_PROGRAM_HINTS):
+            hits.add(pid)
+    return hits
+
+
+def looks_like_vault_deposit(tx: dict[str, Any], transfers: list[dict[str, Any]], owner_map: dict[str, str], mint: str) -> bool:
+    if vault_programs(tx):
+        return True
+    if not transfers:
+        return False
+    for transfer in transfers:
+        if transfer["kind"] != "spl_transfer" or transfer["mint"] != mint:
+            continue
+        destination = transfer.get("destination")
+        if not destination:
+            continue
+        owner = owner_map.get(destination)
+        if not owner:
+            return True
+        if not is_pubkey(owner):
+            return True
+        if owner.startswith("111111") or owner.startswith("AToken"):
+            return True
+    return False
+
+
+def parsed_token_transfers(tx: dict[str, Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    msg = ((tx.get("transaction") or {}).get("message") or {})
+    for ix in msg.get("instructions") or []:
+        parsed = ix.get("parsed")
+        if not isinstance(parsed, dict):
+            continue
+        info = parsed.get("info") or {}
+        itype = parsed.get("type")
+        if itype in {"transfer", "transferChecked"}:
+            mint = info.get("mint")
+            if mint:
+                out.append(
+                    {
+                        "kind": "spl_transfer",
+                        "mint": mint,
+                        "source": info.get("source"),
+                        "destination": info.get("destination"),
+                        "authority": info.get("authority"),
+                        "amount": float(info.get("tokenAmount", {}).get("uiAmount") or info.get("amount") or 0),
+                    }
+                )
+        if itype in {"transfer", "transferChecked"} and info.get("lamports") is not None:
+            out.append(
+                {
+                    "kind": "sol_transfer",
+                    "mint": SOL_MINT,
+                    "source": info.get("source"),
+                    "destination": info.get("destination"),
+                    "authority": info.get("authority"),
+                    "amount": float(info.get("lamports") or 0) / 1_000_000_000,
+                }
+            )
+    return out
+
+
+def token_account_owner_map(tx: dict[str, Any], mint: str) -> dict[str, str]:
+    keys = account_keys(tx)
+    owners: dict[str, str] = {}
+    meta = tx.get("meta") or {}
+    for bucket in (meta.get("preTokenBalances") or [], meta.get("postTokenBalances") or []):
+        for row in bucket:
+            if row.get("mint") != mint:
+                continue
+            owner = row.get("owner")
+            if not owner:
+                continue
+            account = row.get("tokenAccount") or row.get("address")
+            idx = row.get("accountIndex")
+            if not account and isinstance(idx, int) and 0 <= idx < len(keys):
+                account = keys[idx]
+            if account:
+                owners[str(account)] = str(owner)
+    return owners
 
 
 def tx_time(tx: dict[str, Any]) -> datetime | None:
@@ -195,6 +291,22 @@ def first_sender_funder(tx: dict[str, Any], wallet: str) -> str | None:
                     largest_out = delta
                     sender = key
             return sender
+    return None
+
+
+def transfer_counterparty(wallet: str, token_delta: float, transfers: list[dict[str, Any]], mint: str, owner_map: dict[str, str]) -> str | None:
+    if token_delta < 0:
+        for transfer in transfers:
+            if transfer["kind"] == "spl_transfer" and transfer["mint"] == mint:
+                destination = transfer.get("destination")
+                if destination and destination != wallet:
+                    return owner_map.get(destination, destination)
+    elif token_delta > 0:
+        for transfer in transfers:
+            if transfer["kind"] == "spl_transfer" and transfer["mint"] == mint:
+                source = transfer.get("source")
+                if source and source != wallet:
+                    return owner_map.get(source, source)
     return None
 
 
@@ -569,6 +681,31 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
             )
     else:
         lines.append("- No high-confidence buy/transfer/sale sequence reconstructed from the available history.")
+
+    project = report.get("project_research")
+    if project:
+        lines += [
+            "",
+            "## Project Research",
+            f"- Utility score: `{project.get('score')}`",
+            f"- Verdict: `{project.get('verdict')}`",
+        ]
+        socials = project.get("socials") or {}
+        if socials:
+            lines.append("- Socials:")
+            for key in ("website", "twitter", "telegram"):
+                if socials.get(key):
+                    lines.append(f"  - {key}: `{socials[key]}`")
+        useful_links = project.get("useful_links") or []
+        if useful_links:
+            lines.append("- Useful links:")
+            for link in useful_links[:10]:
+                lines.append(f"  - `{link}`")
+        reasons = project.get("reasons") or []
+        if reasons:
+            lines.append("- Signals:")
+            for reason in reasons[:12]:
+                lines.append(f"  - {reason}")
     lines += [
         "",
         "## Notes",
@@ -688,6 +825,9 @@ def collect(
             token_delta = deltas[wallet]
             sol_delta = sol_deltas.get(wallet, 0.0)
             parsed_transfers = parsed_token_transfers(tx)
+            owner_map = token_account_owner_map(tx, mint)
+            has_spl_transfer = any(t["kind"] == "spl_transfer" and t["mint"] == mint for t in parsed_transfers)
+            vault_deposit = looks_like_vault_deposit(tx, parsed_transfers, owner_map, mint)
 
             if token_delta > 0 and sol_delta < 0:
                 e = Event(wallet, mint, sig.signature, "buy", tstamp_iso, token_amount=token_delta, sol_amount=abs(sol_delta), relationship_confidence="high")
@@ -698,9 +838,8 @@ def collect(
                 events.append(e)
                 wallet_events[wallet].append(e)
                 profiles[wallet].sold_token = True
-            elif token_delta < 0 and transfer_only(tx):
-                recipients = [t.get("destination") for t in parsed_transfers if t["kind"] == "spl_transfer" and t["mint"] == mint and t.get("destination") and t.get("destination") != wallet]
-                recipient = recipients[0] if recipients else None
+            elif token_delta < 0 and (transfer_only(tx) or has_spl_transfer) and not vault_deposit:
+                recipient = transfer_counterparty(wallet, token_delta, parsed_transfers, mint, owner_map)
                 e = Event(wallet, mint, sig.signature, "transfer_out", tstamp_iso, token_amount=abs(token_delta), counterparty=recipient, relationship_confidence="high" if recipient else "medium")
                 events.append(e)
                 wallet_events[wallet].append(e)
@@ -708,9 +847,8 @@ def collect(
                     seen.add(recipient)
                     frontier.append((recipient, level + 1))
                     profiles[recipient] = WalletProfile(wallet=recipient, level=level + 1, received_from_developer=(wallet == developer))
-            elif token_delta > 0 and transfer_only(tx):
-                senders = [t.get("source") for t in parsed_transfers if t["kind"] == "spl_transfer" and t["mint"] == mint and t.get("source") and t.get("source") != wallet]
-                sender = senders[0] if senders else None
+            elif token_delta > 0 and (transfer_only(tx) or has_spl_transfer) and not vault_deposit:
+                sender = transfer_counterparty(wallet, token_delta, parsed_transfers, mint, owner_map)
                 e = Event(wallet, mint, sig.signature, "transfer_in", tstamp_iso, token_amount=token_delta, counterparty=sender, relationship_confidence="high" if sender else "medium")
                 events.append(e)
                 wallet_events[wallet].append(e)
@@ -741,6 +879,20 @@ def collect(
                             seen.add(transfer["destination"])
                             frontier.append((transfer["destination"], level + 1))
                             profiles[transfer["destination"]] = WalletProfile(wallet=transfer["destination"], level=level + 1)
+
+            if vault_deposit and token_delta < 0:
+                e = Event(
+                    wallet,
+                    mint,
+                    sig.signature,
+                    "vault_deposit",
+                    tstamp_iso,
+                    token_amount=abs(token_delta),
+                    counterparty=transfer_counterparty(wallet, token_delta, parsed_transfers, mint, owner_map),
+                    relationship_confidence="medium",
+                )
+                events.append(e)
+                wallet_events[wallet].append(e)
 
     developer_evidence = find_developer_create_evidence(helius, developer, mint)
     return events, profiles, truncated, developer_evidence, launch_time

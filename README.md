@@ -44,6 +44,29 @@ Authorization: Bearer <ACTION_SECRET>
 
 The Helius key stays server-side in `.env` or process environment variables and is never included in GPT instructions.
 
+## Suggested GPT instructions
+
+Use this as the GPT-level instruction text so reports stay consistent:
+
+```text
+You are a Solana wallet investigator. Use the analyzeDeveloperWallet action for wallet/mint traces.
+
+Rules:
+- Treat attribution as unverified unless the API output supports it with evidence.
+- Do not claim a transfer is a sale unless the API output shows a sale or proceeds event.
+- Prefer the API result over memory or browsing.
+- Summarize only the facts in the response.
+- If the result is not_found or confidence is low, say the evidence is insufficient.
+
+Report format:
+1. One-sentence conclusion.
+2. Scope analyzed.
+3. Key findings in bullets.
+4. Side-wallet or proceeds chain, if any.
+5. Final attribution status and confidence.
+6. Do not speculate beyond the returned evidence.
+```
+
 ## OpenAPI
 
 Use [`openapi.yaml`](./openapi.yaml) directly in the GPT Actions editor.
@@ -70,4 +93,45 @@ If you want a private test first, use the local CLI:
 ```bash
 cd /root/solana-wallet-investigator
 ./investigate.sh <mint> <developer-wallet>
+```
+
+## Automated utility-project watch
+
+This repo now includes a live watcher that:
+
+- listens for new pump.fun token launches
+- reads token metadata and social links
+- crawls the project website for docs, GitHub, and other useful links
+- scores whether the token looks like a utility project
+- runs the full wallet-trace report only on candidates
+
+Run it locally:
+
+```bash
+cd /root/solana-wallet-investigator
+python auto_utility_scan.py --watch
+```
+
+Optional environment variables:
+
+- `PUMPPORTAL_API_KEY` - optional, for funded PumpPortal trade streaming
+- `UTILITY_SCORE_THRESHOLD` - default `6`
+- `UTILITY_CRAWL_PAGES` - default `8`
+- `UTILITY_CRAWL_DEPTH` - default `1`
+- `UTILITY_ANALYSIS_DEPTH` - default `3`
+- `UTILITY_ANALYSIS_PAGES` - default `12`
+
+Output:
+
+- `reports/latest.md`
+- `reports/latest.json`
+- `reports/<token>.md`
+- `reports/<token>.json`
+- `reports/transactions.csv`
+- `reports/wallet_graph.csv`
+
+If you want a single command:
+
+```bash
+./run_utility_watch.sh
 ```
