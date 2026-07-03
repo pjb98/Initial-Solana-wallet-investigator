@@ -30,9 +30,6 @@ UTILITY_KEYWORDS = {
     "builder",
     "marketplace",
     "compute",
-    "deploy",
-    "deployment",
-    "deployed",
     "webhook",
     "workflow",
     "workflows",
@@ -81,9 +78,6 @@ INFRA_KEYWORDS = {
     "builder",
     "marketplace",
     "compute",
-    "deploy",
-    "deployment",
-    "deployed",
     "webhook",
     "workflow",
     "workflows",
@@ -384,6 +378,23 @@ def _has_tiktok_signal(metadata: dict[str, Any], socials: dict[str, str | None])
     return False
 
 
+def _has_meme_hashtag(metadata: dict[str, Any], pages: list[PageSnapshot]) -> tuple[bool, str | None]:
+    blobs: list[tuple[str, str]] = []
+    for key, value in metadata.items():
+        if isinstance(value, str) and value.strip():
+            blobs.append((str(key), value))
+    for page in pages:
+        blob = " ".join(filter(None, [page.title or "", page.description or "", page.text or ""]))
+        if blob:
+            blobs.append((page.url, blob))
+    pattern = re.compile(r"#\w*memes?\w*", flags=re.I)
+    for source, blob in blobs:
+        match = pattern.search(blob)
+        if match:
+            return True, source
+    return False, None
+
+
 def _host_of(url: str | None) -> str | None:
     if not url:
         return None
@@ -394,6 +405,23 @@ def _host_of(url: str | None) -> str | None:
 def _is_social_host(url: str | None) -> bool:
     host = _host_of(url)
     return bool(host and host in SOCIAL_HOSTS)
+
+
+def _is_candidate_website(url: str | None) -> bool:
+    if not url:
+        return False
+    low = url.lower()
+    if _is_social_host(url):
+        return False
+    if any(host in low for host in ("x.com", "twitter.com", "t.co", "t.me", "telegram.me", "discord.com", "discord.gg", "linktr.ee", "beacons.ai", "bio.link")):
+        return False
+    if any(host in low for host in ("ipfs.io/ipfs", "arweave.net", "cdn.helius-rpc.com", "images.", "image.")):
+        return False
+    if re.search(r"\.(png|jpg|jpeg|gif|webp|svg|bmp|ico|mp4|mov|mp3|wav)(\?|#|$)", low):
+        return False
+    if "/communities/" in low:
+        return False
+    return True
 
 
 def _twitter_handle_from_url(url: str | None) -> str | None:
@@ -507,6 +535,8 @@ def _extract_from_metadata(metadata: dict[str, Any]) -> dict[str, str | None]:
         "telegram": _normalize_url(low.get("telegram") or low.get("telegram_url")),
         "website": _normalize_url(low.get("website") or low.get("url") or low.get("homepage")),
     }
+    if not _is_candidate_website(socials["website"]):
+        socials["website"] = None
     for v in metadata.values():
         if not isinstance(v, str):
             continue
@@ -518,7 +548,9 @@ def _extract_from_metadata(metadata: dict[str, Any]) -> dict[str, str | None]:
         if not socials["website"] and text.startswith("http") and not any(
             bad in text for bad in ("twitter", "x.com", "t.me", "pump.fun", "ipfs", "arweave")
         ):
-            socials["website"] = _normalize_url(v)
+            candidate = _normalize_url(v)
+            if _is_candidate_website(candidate):
+                socials["website"] = candidate
     return socials
 
 
@@ -562,7 +594,9 @@ def fetch_dexscreener_metadata(mint: str, timeout: float = 12.0) -> dict[str, st
     websites = info.get("websites") or []
     if websites:
         first = websites[0]
-        socials["website"] = _normalize_url(first.get("url") if isinstance(first, dict) else first)
+        candidate = _normalize_url(first.get("url") if isinstance(first, dict) else first)
+        if _is_candidate_website(candidate):
+            socials["website"] = candidate
     return socials
 
 
@@ -1256,6 +1290,28 @@ def build_project_research(
                 if link not in seed_urls:
                     seed_urls.append(link)
     crawled_pages = _dedupe_pages(profile_pages + crawl_project_sites(seed_urls))
+    meme_hashtag, meme_source = _has_meme_hashtag(token_metadata, crawled_pages)
+    if meme_hashtag:
+        return ProjectResearch(
+            mint=mint,
+            symbol=symbol,
+            name=name,
+            uri=uri,
+            creator=creator,
+            metadata=token_metadata,
+            socials=socials,
+            seed_urls=seed_urls,
+            crawled_pages=crawled_pages,
+            useful_links=[],
+            score=0,
+            verdict="meme_candidate",
+            contract_found=False,
+            contract_evidence=None,
+            utility_signals=0,
+            infra_signals=0,
+            meme_signals=2,
+            reasons=[f"meme hashtag detected in {meme_source or 'project text'}; excluded from utility analysis"],
+        )
     contract_found, contract_evidence = _find_contract_evidence(mint, seed_urls, crawled_pages)
     program_snapshots = collect_program_snapshots(token_metadata, crawled_pages, launch_time=launch_time)
     if not contract_found:
