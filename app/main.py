@@ -200,6 +200,10 @@ _DASHBOARD_HTML = """<!doctype html>
       return `<span class="verdict ${cls}">${esc(value || 'unclear')}</span>`;
     }
 
+    function v2Badge(value) {
+      return value ? '<span class="status ok">v2</span>' : '<span class="status">no</span>';
+    }
+
     function pumpfunUrl(mint) {
       return `https://pump.fun/coin/${encodeURIComponent(mint)}`;
     }
@@ -235,6 +239,7 @@ _DASHBOARD_HTML = """<!doctype html>
           </td>
           <td>${badge(row.status)}</td>
           <td>${verdictBadge(row.verdict)}</td>
+          <td>${v2Badge(row.v2?.eligible || row.automation?.v2?.eligible)}</td>
           <td>${esc(row.score ?? '')}</td>
           <td>${esc(row.discovered_at || '')}</td>
           <td>${esc(row.completed_at || '')}</td>
@@ -249,6 +254,7 @@ _DASHBOARD_HTML = """<!doctype html>
               <th>Token</th>
               <th>Status</th>
               <th>Verdict</th>
+              <th>V2</th>
               <th>Score</th>
               <th>Discovered</th>
               <th>Completed</th>
@@ -256,7 +262,7 @@ _DASHBOARD_HTML = """<!doctype html>
               <th>Report</th>
             </tr>
           </thead>
-          <tbody>${rows || '<tr><td colspan="8" class="muted">No scraped tokens yet.</td></tr>'}</tbody>
+          <tbody>${rows || '<tr><td colspan="9" class="muted">No scraped tokens yet.</td></tr>'}</tbody>
         </table>
       `;
       document.querySelectorAll('tr[data-mint]').forEach((tr) => tr.addEventListener('click', () => loadDetail(tr.dataset.mint)));
@@ -276,6 +282,7 @@ _DASHBOARD_HTML = """<!doctype html>
           <div>Creator</div><div><code>${esc(data.creator || '')}</code></div>
           <div>Status</div><div>${badge(data.status)}</div>
           <div>Verdict</div><div>${verdictBadge(data.verdict)}</div>
+          <div>V2</div><div>${v2Badge(data.v2?.eligible || data.automation?.v2?.eligible)}</div>
           <div>Alert Tier</div><div>${esc(data.alert_tier || data.score_breakdown?.alert_tier || data.automation?.alert_tier || '')}</div>
           <div>Score</div><div>${esc(data.score ?? '')}</div>
           <div>Discovered</div><div>${esc(data.discovered_at || '')}</div>
@@ -286,6 +293,10 @@ _DASHBOARD_HTML = """<!doctype html>
         const breakdown = data.score_breakdown || data.automation?.score_breakdown || {};
         if (breakdown && Object.keys(breakdown).length) {
           $('detail-kv').insertAdjacentHTML('beforeend', `<div>Score Breakdown</div><div>${esc(Object.entries(breakdown).map(([k, v]) => `${k}: ${v}`).join(' • '))}</div>`);
+        }
+        const v2 = data.v2 || data.automation?.v2 || {};
+        if (v2 && Object.keys(v2).length) {
+          $('detail-kv').insertAdjacentHTML('beforeend', `<div>V2 Evidence</div><div>${esc(Object.entries(v2).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`).join(' • '))}</div>`);
         }
         const links = [];
         if (data.website) links.push(`<a href="${esc(data.website)}" target="_blank">Website</a>`);

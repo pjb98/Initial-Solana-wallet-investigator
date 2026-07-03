@@ -147,6 +147,8 @@ If you want a single command:
 
 The watcher stores scraped tokens in `data/utility_watch.sqlite`. A read-only dashboard is now available from the same FastAPI app.
 
+The watcher now also produces a separate `v2` alert path when it finds GitHub/docs/tweeted evidence plus contract-address evidence. These alerts are labeled `v2` in Discord, the report automation block, and the dashboard.
+
 VPS service:
 
 ```bash

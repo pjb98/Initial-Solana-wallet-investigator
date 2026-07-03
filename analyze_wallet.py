@@ -867,6 +867,13 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
             f"- Utility score: `{project.get('score')}`",
             f"- Verdict: `{project.get('verdict')}`",
         ]
+        v2 = (project.get("score_breakdown") or {}).get("v2") or {}
+        if v2:
+            lines.append(f"- V2 eligible: `{v2.get('eligible')}`")
+            if v2.get("alert_tier"):
+                lines.append(f"- V2 alert tier: `{v2.get('alert_tier')}`")
+            if v2.get("evidence_sources"):
+                lines.append(f"- V2 evidence sources: `{', '.join(v2.get('evidence_sources') or [])}`")
         deployment = (project.get("score_breakdown") or {}).get("deployment_verification") or {}
         if deployment:
             lines.append("- Deployment verification:")

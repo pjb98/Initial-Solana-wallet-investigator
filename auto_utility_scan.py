@@ -215,11 +215,17 @@ def _analysis_for_token(
         launch_time=token.created_at.isoformat() if token.created_at else None,
     )
 
-    if not research.contract_found or research.verdict not in {"utility_candidate", "infra_candidate"}:
+    v2_signal = (research.score_breakdown or {}).get("v2") or {}
+    v2_eligible = bool(v2_signal.get("eligible"))
+    main_eligible = research.verdict in {"utility_candidate", "infra_candidate"}
+
+    if not research.contract_found or not (main_eligible or v2_eligible):
         return {
             "token": token,
             "research": research,
             "report": None,
+            "main_eligible": main_eligible,
+            "v2_eligible": v2_eligible,
         }
 
     if not token.creator:
@@ -245,12 +251,13 @@ def _analysis_for_token(
     breakdown = research.score_breakdown or {}
     report["project_research"] = research.as_dict()
     report["automation"] = {
-        "trigger": "utility_score_threshold",
+        "trigger": "utility_score_threshold" if main_eligible else "v2_contract_docs_github_tweet",
         "score_threshold": SETTINGS.utility_score_threshold,
         "score": research.score,
         "verdict": research.verdict,
         "alert_tier": _alert_tier(research),
         "score_breakdown": breakdown,
+        "v2": v2_signal,
         "utility_signals": research.utility_signals,
         "infra_signals": research.infra_signals,
         "meme_signals": research.meme_signals,
@@ -258,7 +265,13 @@ def _analysis_for_token(
         "contract_evidence": research.contract_evidence,
         "generated_at": _now(),
     }
-    return {"token": token, "research": research, "report": report}
+    return {
+        "token": token,
+        "research": research,
+        "report": report,
+        "main_eligible": main_eligible,
+        "v2_eligible": v2_eligible,
+    }
 
 
 def _write_report(token: ObservedToken, report: dict[str, Any], research: Any) -> tuple[Path, Path]:
@@ -320,7 +333,14 @@ def _reason_summary(reasons: list[str], limit: int = 4, max_chars: int = 900) ->
     return "\n".join(selected)
 
 
-def _send_discord_alert(token: ObservedToken, research: Any, report: dict[str, Any], md_path: Path) -> None:
+def _send_discord_alert(
+    token: ObservedToken,
+    research: Any,
+    report: dict[str, Any],
+    md_path: Path,
+    *,
+    version_label: str | None = None,
+) -> None:
     webhook_url = SETTINGS.discord_webhook_url
     if not webhook_url:
         return
@@ -329,6 +349,7 @@ def _send_discord_alert(token: ObservedToken, research: Any, report: dict[str, A
     breakdown = getattr(research, "score_breakdown", {}) or {}
     tier = _alert_tier(research)
     socials = (research.as_dict() if hasattr(research, "as_dict") else {}).get("socials", {})
+    title_prefix = f"{version_label} " if version_label else ""
     fields = [
         {"name": "Mint", "value": token.mint, "inline": False},
         {"name": "Verdict", "value": str(getattr(research, "verdict", "unknown")), "inline": True},
@@ -349,6 +370,11 @@ def _send_discord_alert(token: ObservedToken, research: Any, report: dict[str, A
     contract_evidence = getattr(research, "contract_evidence", None)
     if contract_evidence:
         fields.append({"name": "Contract Evidence", "value": str(contract_evidence), "inline": False})
+    v2_signal = breakdown.get("v2") or {}
+    if version_label or v2_signal.get("eligible"):
+        fields.append({"name": "Classification Version", "value": version_label or "current", "inline": True})
+    if v2_signal.get("eligible"):
+        fields.append({"name": "V2 Evidence", "value": ", ".join(v2_signal.get("evidence_sources") or []) or "present", "inline": True})
     for label, key in (("Website", "website"), ("Twitter", "twitter"), ("Telegram", "telegram")):
         value = socials.get(key) if isinstance(socials, dict) else None
         if value:
@@ -363,7 +389,7 @@ def _send_discord_alert(token: ObservedToken, research: Any, report: dict[str, A
         "username": "Solana Investigator",
         "embeds": [
             {
-                "title": f"{tier} - {token.symbol or token.name or token.mint[:8]} alert",
+                "title": f"{title_prefix}{tier} - {token.symbol or token.name or token.mint[:8]} alert",
                 "description": f"Completed {getattr(research, 'verdict', 'unknown')} analysis for a qualifying token.",
                 "color": _discord_color(str(getattr(research, "verdict", "")), tier=tier),
                 "fields": fields,
@@ -400,6 +426,8 @@ async def _handle_token(helius: HeliusClient, con: sqlite3.Connection, token: Ob
         result = await asyncio.to_thread(_analysis_for_token, helius, token, metadata)
         research = result["research"]
         report = result["report"]
+        main_eligible = bool(result.get("main_eligible"))
+        v2_eligible = bool(result.get("v2_eligible"))
         if report is None:
             print(
                 f"[skip] {token.symbol or token.name or token.mint[:8]} "
@@ -420,7 +448,10 @@ async def _handle_token(helius: HeliusClient, con: sqlite3.Connection, token: Ob
             analysis_json=json.dumps(report),
             completed_at=_now(),
         )
-        _send_discord_alert(token, research, report, md_path)
+        if main_eligible:
+            _send_discord_alert(token, research, report, md_path)
+        if v2_eligible:
+            _send_discord_alert(token, research, report, md_path, version_label="v2")
     except Exception as exc:
         if _is_expected_url_error(exc):
             print(f"[skip] {token.symbol or token.name or token.mint[:8]} invalid project url: {str(exc)[:140]}")

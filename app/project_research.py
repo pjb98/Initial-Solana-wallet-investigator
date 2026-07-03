@@ -1235,6 +1235,69 @@ def score_utility_project(
     return score, verdict, reasons, useful_links, utility_signals, infra_signals, meme_signals, score_breakdown
 
 
+def _v2_project_signal(
+    *,
+    contract_found: bool,
+    contract_evidence: str | None,
+    crawled_pages: list[PageSnapshot],
+    github_repos: list[GithubRepoSnapshot],
+) -> dict[str, Any]:
+    sources: list[str] = []
+    reasons: list[str] = []
+
+    if github_repos:
+        sources.append("github")
+        reasons.append("GitHub repository discovered")
+
+    docs_pages: list[str] = []
+    tweeted_pages: list[str] = []
+    for page in crawled_pages:
+        page_blob = " ".join(filter(None, [page.title or "", page.description or "", page.text or ""])).lower()
+        links_blob = " ".join(page.links).lower()
+        if "/docs" in page.url.lower() or any(term in page_blob for term in ("documentation", "getting started", "how it works", "docs")):
+            docs_pages.append(page.url)
+        if _is_social_host(page.url) and (
+            "github" in page_blob
+            or "docs" in page_blob
+            or "github.com" in links_blob
+            or "docs." in links_blob
+            or "/docs" in links_blob
+        ):
+            tweeted_pages.append(page.url)
+
+    if docs_pages:
+        sources.append("docs")
+        reasons.append(f"docs/product evidence found on {docs_pages[0]}")
+        if len(docs_pages) > 1:
+            reasons.append(f"additional docs pages: {len(docs_pages) - 1}")
+    if tweeted_pages:
+        sources.append("tweeted")
+        reasons.append(f"tweeted references to GitHub/docs found on {tweeted_pages[0]}")
+        if len(tweeted_pages) > 1:
+            reasons.append(f"additional tweeted references: {len(tweeted_pages) - 1}")
+
+    contract_source = None
+    if contract_evidence:
+        ce = contract_evidence.lower()
+        if "github.com" in ce or "www.github.com" in ce:
+            contract_source = "github"
+        elif "/docs" in ce or "docs." in ce:
+            contract_source = "docs"
+        else:
+            contract_source = "website"
+
+    eligible = bool(contract_found and sources and contract_source in {"website", "github", "docs"})
+    alert_tier = "v2 Review" if eligible and (github_repos or docs_pages) else "v2 Watch"
+
+    return {
+        "eligible": eligible,
+        "alert_tier": alert_tier if eligible else None,
+        "contract_source": contract_source,
+        "evidence_sources": sources,
+        "reasons": reasons if eligible else [],
+    }
+
+
 def build_project_research(
     *,
     mint: str,
@@ -1343,6 +1406,15 @@ def build_project_research(
         socials=socials,
         crawled_pages=crawled_pages,
     )
+    v2_signal = _v2_project_signal(
+        contract_found=contract_found,
+        contract_evidence=contract_evidence,
+        crawled_pages=crawled_pages,
+        github_repos=github_repos,
+    )
+    score_breakdown["v2"] = v2_signal
+    if v2_signal.get("eligible"):
+        reasons.extend(v2_signal.get("reasons") or [])
     if github_repos:
         repo_notes: list[str] = []
         repo_score_boost = 0

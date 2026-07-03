@@ -53,6 +53,7 @@ def list_tokens(limit: int = 200) -> list[dict[str, Any]]:
             analysis = _safe_json(row["analysis_json"])
             socials = research.get("socials") or {}
             score_breakdown = research.get("score_breakdown") or {}
+            v2_signal = score_breakdown.get("v2") or (analysis.get("automation") or {}).get("v2") or {}
             report_name = Path(row["report_path"]).name if row["report_path"] else None
             tokens.append(
                 {
@@ -79,6 +80,7 @@ def list_tokens(limit: int = 200) -> list[dict[str, Any]]:
                     "automation": analysis.get("automation") or {},
                     "score_breakdown": score_breakdown,
                     "alert_tier": (analysis.get("automation") or {}).get("alert_tier"),
+                    "v2": v2_signal,
                     "summary": analysis.get("summary") or {},
                 }
             )
@@ -107,6 +109,7 @@ def get_token(mint: str) -> dict[str, Any] | None:
         analysis = _safe_json(row["analysis_json"])
         metadata = _safe_json(row["metadata_json"])
         score_breakdown = research.get("score_breakdown") or {}
+        v2_signal = score_breakdown.get("v2") or (analysis.get("automation") or {}).get("v2") or {}
         report_text = None
         report_path = row["report_path"]
         report_name = Path(report_path).name if report_path else None
@@ -138,6 +141,7 @@ def get_token(mint: str) -> dict[str, Any] | None:
             "analysis": analysis,
             "score_breakdown": score_breakdown,
             "alert_tier": (analysis.get("automation") or {}).get("alert_tier"),
+            "v2": v2_signal,
             "report_text": report_text,
         }
     finally:

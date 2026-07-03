@@ -99,3 +99,8 @@ This file records the work performed in this project folder. It is meant to be a
     - merge feed items from multiple mirrors to reduce stale-cache issues
     - extract real tweet text from RSS items rather than page-shell markup
     - keep tweet URLs and text for downstream scoring and link discovery
+
+18. Added a parallel v2 classification and alert path.
+    - kept the existing utility/infra rules in place
+    - added a separate v2 gate for GitHub/docs/tweeted evidence plus contract-address evidence
+    - labeled Discord, dashboard, and report outputs with v2 when that path fires
