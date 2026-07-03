@@ -11,6 +11,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 from typing import Any
 
 try:
@@ -20,6 +21,7 @@ except ImportError:  # pragma: no cover - optional dependency
         return False
 
 import websockets
+import requests
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
@@ -33,6 +35,8 @@ from app.project_research import build_project_research, fetch_json_metadata  # 
 
 WATCH_DB = BASE_DIR / "data" / "utility_watch.sqlite"
 REPORTS_DIR = BASE_DIR / "reports"
+_HTTP = requests.Session()
+_HTTP.headers.update({"User-Agent": "solana-wallet-investigator/0.1"})
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS utility_tokens (
@@ -208,6 +212,7 @@ def _analysis_for_token(
         uri=token.uri,
         creator=token.creator,
         token_metadata=metadata,
+        launch_time=token.created_at.isoformat() if token.created_at else None,
     )
 
     if not research.contract_found or research.verdict not in {"utility_candidate", "infra_candidate"}:
@@ -237,12 +242,15 @@ def _analysis_for_token(
         developer_evidence=developer_evidence,
         launch_time=launch_time,
     )
+    breakdown = research.score_breakdown or {}
     report["project_research"] = research.as_dict()
     report["automation"] = {
         "trigger": "utility_score_threshold",
         "score_threshold": SETTINGS.utility_score_threshold,
         "score": research.score,
         "verdict": research.verdict,
+        "alert_tier": _alert_tier(research),
+        "score_breakdown": breakdown,
         "utility_signals": research.utility_signals,
         "infra_signals": research.infra_signals,
         "meme_signals": research.meme_signals,
@@ -267,6 +275,121 @@ def _write_report(token: ObservedToken, report: dict[str, Any], research: Any) -
         f"score={research.score} verdict={research.verdict} -> {md_path.name}"
     )
     return md_path, json_path
+
+
+def _discord_color(verdict: str, tier: str | None = None) -> int:
+    if tier == "Urgent Risk":
+        return 0xED4245
+    if tier == "Review":
+        return 0x1F8B4C
+    if tier == "Watch":
+        return 0xFEE75C
+    if verdict == "infra_candidate":
+        return 0x57F287
+    if verdict == "utility_candidate":
+        return 0x1F8B4C
+    if verdict == "possible_utility":
+        return 0xFEE75C
+    return 0x5865F2
+
+
+def _alert_tier(research: Any) -> str:
+    breakdown = getattr(research, "score_breakdown", {}) or {}
+    tier = breakdown.get("alert_tier")
+    if isinstance(tier, str) and tier:
+        return tier
+    verdict = str(getattr(research, "verdict", "") or "")
+    if verdict in {"utility_candidate", "infra_candidate"}:
+        return "Watch"
+    return "Watch"
+
+
+def _reason_summary(reasons: list[str], limit: int = 4, max_chars: int = 900) -> str:
+    if not reasons:
+        return "No detailed reasons were recorded."
+    selected: list[str] = []
+    total = 0
+    for reason in reasons:
+        piece = f"• {reason}"
+        if selected and len(selected) >= limit:
+            break
+        if total + len(piece) > max_chars:
+            break
+        selected.append(piece)
+        total += len(piece) + 1
+    return "\n".join(selected)
+
+
+def _send_discord_alert(token: ObservedToken, research: Any, report: dict[str, Any], md_path: Path) -> None:
+    webhook_url = SETTINGS.discord_webhook_url
+    if not webhook_url:
+        return
+
+    reasons = list(getattr(research, "reasons", []) or [])
+    breakdown = getattr(research, "score_breakdown", {}) or {}
+    tier = _alert_tier(research)
+    socials = (research.as_dict() if hasattr(research, "as_dict") else {}).get("socials", {})
+    fields = [
+        {"name": "Mint", "value": token.mint, "inline": False},
+        {"name": "Verdict", "value": str(getattr(research, "verdict", "unknown")), "inline": True},
+        {"name": "Score", "value": str(getattr(research, "score", 0)), "inline": True},
+        {"name": "Alert Tier", "value": tier, "inline": True},
+        {"name": "Why It Passed", "value": _reason_summary(reasons), "inline": False},
+    ]
+    if breakdown:
+        fields.extend(
+            [
+                {"name": "Project Relevance", "value": str(breakdown.get("project_relevance", "")), "inline": True},
+                {"name": "Evidence Quality", "value": str(breakdown.get("evidence_quality", "")), "inline": True},
+                {"name": "Execution", "value": str(breakdown.get("execution_score", "")), "inline": True},
+                {"name": "Market Risk", "value": str(breakdown.get("market_risk", "")), "inline": True},
+                {"name": "Analysis Confidence", "value": str(breakdown.get("analysis_confidence", "")), "inline": True},
+            ]
+        )
+    contract_evidence = getattr(research, "contract_evidence", None)
+    if contract_evidence:
+        fields.append({"name": "Contract Evidence", "value": str(contract_evidence), "inline": False})
+    for label, key in (("Website", "website"), ("Twitter", "twitter"), ("Telegram", "telegram")):
+        value = socials.get(key) if isinstance(socials, dict) else None
+        if value:
+            fields.append({"name": label, "value": str(value), "inline": False})
+    trojan_template = SETTINGS.trojan_terminal_url_template
+    if trojan_template:
+        trojan_url = trojan_template.format(mint=quote(token.mint, safe=""))
+        fields.append({"name": "Trojan", "value": f"[Open Trojan]({trojan_url})", "inline": False})
+    fields.append({"name": "Report", "value": md_path.name, "inline": False})
+
+    payload = {
+        "username": "Solana Investigator",
+        "embeds": [
+            {
+                "title": f"{tier} - {token.symbol or token.name or token.mint[:8]} alert",
+                "description": f"Completed {getattr(research, 'verdict', 'unknown')} analysis for a qualifying token.",
+                "color": _discord_color(str(getattr(research, "verdict", "")), tier=tier),
+                "fields": fields,
+                "footer": {"text": "Solana wallet investigator"},
+            }
+        ],
+    }
+    try:
+        resp = _HTTP.post(webhook_url, json=payload, timeout=10)
+        resp.raise_for_status()
+    except Exception as exc:
+        print(f"[discord] alert failed for {token.mint}: {str(exc)[:180]}")
+
+
+def _is_expected_url_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return any(
+        needle in message
+        for needle in (
+            "invalid ipv6 url",
+            "invalid url",
+            "missing schema",
+            "no connection adapters",
+            "failed to parse",
+        )
+    )
 
 
 async def _handle_token(helius: HeliusClient, con: sqlite3.Connection, token: ObservedToken) -> None:
@@ -297,7 +420,11 @@ async def _handle_token(helius: HeliusClient, con: sqlite3.Connection, token: Ob
             analysis_json=json.dumps(report),
             completed_at=_now(),
         )
+        _send_discord_alert(token, research, report, md_path)
     except Exception as exc:
+        if _is_expected_url_error(exc):
+            print(f"[skip] {token.symbol or token.name or token.mint[:8]} invalid project url: {str(exc)[:140]}")
+            return
         _upsert_token(
             con,
             token,

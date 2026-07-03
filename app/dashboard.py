@@ -41,6 +41,7 @@ def list_tokens(limit: int = 200) -> list[dict[str, Any]]:
             SELECT mint, name, symbol, creator, uri, discovered_at, score, verdict,
                    report_path, json_path, status, completed_at, metadata_json, research_json, analysis_json, last_error
             FROM utility_tokens
+            WHERE status='reported'
             ORDER BY discovered_at DESC
             LIMIT ?
             """,
@@ -51,6 +52,7 @@ def list_tokens(limit: int = 200) -> list[dict[str, Any]]:
             research = _safe_json(row["research_json"])
             analysis = _safe_json(row["analysis_json"])
             socials = research.get("socials") or {}
+            score_breakdown = research.get("score_breakdown") or {}
             report_name = Path(row["report_path"]).name if row["report_path"] else None
             tokens.append(
                 {
@@ -75,9 +77,9 @@ def list_tokens(limit: int = 200) -> list[dict[str, Any]]:
                     "telegram": socials.get("telegram"),
                     "useful_links": research.get("useful_links") or [],
                     "automation": analysis.get("automation") or {},
+                    "score_breakdown": score_breakdown,
+                    "alert_tier": (analysis.get("automation") or {}).get("alert_tier"),
                     "summary": analysis.get("summary") or {},
-                    "contract_found": research.get("contract_found"),
-                    "contract_evidence": research.get("contract_evidence"),
                 }
             )
         return tokens
@@ -104,6 +106,7 @@ def get_token(mint: str) -> dict[str, Any] | None:
         research = _safe_json(row["research_json"])
         analysis = _safe_json(row["analysis_json"])
         metadata = _safe_json(row["metadata_json"])
+        score_breakdown = research.get("score_breakdown") or {}
         report_text = None
         report_path = row["report_path"]
         report_name = Path(report_path).name if report_path else None
@@ -133,6 +136,8 @@ def get_token(mint: str) -> dict[str, Any] | None:
             "metadata": metadata,
             "research": research,
             "analysis": analysis,
+            "score_breakdown": score_breakdown,
+            "alert_tier": (analysis.get("automation") or {}).get("alert_tier"),
             "report_text": report_text,
         }
     finally:

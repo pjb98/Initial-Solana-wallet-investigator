@@ -35,6 +35,11 @@ def _bool(name: str, default: bool = False) -> bool:
 class Settings:
     helius_api_key: str | None = _env("HELIUS_API_KEY")
     action_secret: str | None = _env("ACTION_SECRET")
+    discord_webhook_url: str | None = _env("DISCORD_WEBHOOK_URL")
+    trojan_terminal_url_template: str | None = _env(
+        "TROJAN_TERMINAL_URL_TEMPLATE",
+        "https://trojan.com/terminal?token={mint}",
+    )
     pumpportal_api_key: str | None = _env("PUMPPORTAL_API_KEY")
     cache_path: Path = Path(_env("INVESTIGATOR_CACHE_PATH", "/tmp/solana-investigator-cache.sqlite") or "/tmp/solana-investigator-cache.sqlite")
     request_timeout: float = float(_env("INVESTIGATOR_REQUEST_TIMEOUT", "20") or 20)

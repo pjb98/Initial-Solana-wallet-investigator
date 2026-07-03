@@ -1,0 +1,101 @@
+Solana Wallet Investigator Worklog
+
+Start: 2026-07-02
+Current date: 2026-07-03
+
+This file records the work performed in this project folder. It is meant to be appended as work continues.
+
+1. Set up the Solana wallet investigator backend.
+   - FastAPI service for GPT Actions
+   - deterministic Helius-backed wallet tracing
+   - report generation for wallet analysis
+
+2. Added and refined the openapi schema for GPT Actions.
+   - created the action endpoint contract
+   - kept authentication separate from the Helius API key
+
+3. Added the local CLI workflow.
+   - `analyze_wallet.py`
+   - `investigate.sh`
+   - local report generation into `reports/`
+
+4. Set up deployment.
+   - Render service configured
+   - public HTTPS endpoint created for the GPT Action
+
+5. Added the watcher for new token launches.
+   - `auto_utility_scan.py`
+   - PumpPortal websocket subscription
+   - metadata crawl
+   - utility/infra scoring
+   - launch gating so only qualifying tokens are analyzed
+
+6. Tightened token classification rules.
+   - TikTok excluded
+   - meme and blog-style pages penalized
+   - utility keywords boosted
+   - contract address required on the website, docs, or GitHub before a full analysis runs
+
+7. Added dashboard support.
+   - token table
+   - report links
+   - Pump.fun hyperlinks
+   - timestamps for completed analyses
+   - dashboard reset/cleanup of prior noisy entries
+
+8. Added Discord alerts.
+   - webhook support added through `DISCORD_WEBHOOK_URL`
+   - alerts fire only after a qualifying report completes
+   - test webhook verified successfully
+
+9. Improved Discord alert content.
+   - included pass reasons from the scorer
+   - added contract evidence when available
+   - added a token-specific Trojan terminal link using the mint
+
+10. Verified the services.
+    - watcher service restarted and confirmed active
+    - dashboard service restarted and confirmed active
+    - Python syntax checks passed for the modified files
+
+11. Current operating state.
+    - watcher is running
+    - dashboard is running
+    - Discord webhook is configured locally
+    - Trojan link template uses `https://trojan.com/terminal?token={mint}`
+
+12. Notes.
+    - GitHub and Discord secrets were handled locally in the project environment.
+    - The log should be appended whenever the project changes.
+
+13. Added richer scoring and cluster reporting.
+    - split project research into relevance, evidence quality, execution, market risk, and analysis confidence
+    - added alert tiers for Discord
+    - added developer cluster output to the wallet report
+    - expanded wallet graph CSV edges to include cluster connections
+    - surfaced alert tier and score breakdown in the dashboard API and detail pane
+
+14. Added GitHub history checks.
+    - discovered GitHub repositories from project links and crawled pages
+    - fetched public GitHub repo metadata
+    - recorded repo creation date, first commit date, commit count, and contributor count
+    - compared repository age to token launch time when available
+    - threaded GitHub evidence into the project score and markdown report
+
+15. Added claim-gated Solana program verification.
+    - only checks on-chain deployment when the project claims to have a deployed program
+    - extracts candidate Solana program addresses from metadata or docs
+    - verifies executable on-chain accounts and records deployment evidence when available
+    - notes when a claim exists but no parseable program address was found
+
+16. Tuned utility scoring for strong product sites.
+    - treated X/Twitter pages as non-punitive for meme scoring
+    - added stronger weights for docs, builder, marketplace, MCP, webhook, and deployment language
+    - removed overly broad meme penalties from generic token-launch wording
+    - confirmed Forgent now classifies as infra_candidate instead of being suppressed by incidental meme text
+
+17. Switched Twitter scraping to Nitter RSS mirrors.
+    - query Nitter mirrors instead of scraping raw X HTML first
+    - merge feed items from multiple mirrors to reduce stale-cache issues
+    - extract real tweet text from RSS items rather than page-shell markup
+    - keep tweet URLs and text for downstream scoring and link discovery

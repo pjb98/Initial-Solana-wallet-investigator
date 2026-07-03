@@ -83,6 +83,13 @@ class HeliusClient:
         )
         return result or None
 
+    def get_account_info(self, address: str) -> dict[str, Any] | None:
+        result = self.rpc(
+            "getAccountInfo",
+            [address, {"encoding": "jsonParsed"}],
+        )
+        return result or None
+
     def paginate_signatures(
         self,
         address: str,
@@ -112,4 +119,3 @@ class HeliusClient:
         if len(seen) >= SETTINGS.truncation_signature_cap:
             truncated = True
         return seen, truncated
-

@@ -160,7 +160,7 @@ _DASHBOARD_HTML = """<!doctype html>
         <div class="card">
           <div class="muted" style="margin-bottom:8px;">Notes</div>
           <div class="muted">Use the same bearer token you configured for the GPT Action. The dashboard itself is public, but the data APIs require authorization.</div>
-          <div class="muted" style="margin-top:8px;">Only completed utility candidates are stored here. Skipped meme launches are no longer inserted into the dashboard table.</div>
+          <div class="muted" style="margin-top:8px;">Only completed reports are shown here. Failed or skipped scans are hidden from the dashboard table.</div>
         </div>
       </div>
     </div>
@@ -200,8 +200,8 @@ _DASHBOARD_HTML = """<!doctype html>
       return `<span class="verdict ${cls}">${esc(value || 'unclear')}</span>`;
     }
 
-    function dexscreenerUrl(mint) {
-      return `https://dexscreener.com/solana/${encodeURIComponent(mint)}`;
+    function pumpfunUrl(mint) {
+      return `https://pump.fun/coin/${encodeURIComponent(mint)}`;
     }
 
     async function loadRows() {
@@ -230,8 +230,8 @@ _DASHBOARD_HTML = """<!doctype html>
       const rows = state.rows.map((row) => `
         <tr data-mint="${esc(row.mint)}">
           <td>
-            <strong><a href="${esc(dexscreenerUrl(row.mint))}" target="_blank">${esc(row.symbol || row.name || row.mint.slice(0,8))}</a></strong>
-            <div class="muted"><a href="${esc(dexscreenerUrl(row.mint))}" target="_blank">${esc(row.mint)}</a></div>
+            <strong><a href="${esc(pumpfunUrl(row.mint))}" target="_blank">${esc(row.symbol || row.name || row.mint.slice(0,8))}</a></strong>
+            <div class="muted"><a href="${esc(pumpfunUrl(row.mint))}" target="_blank">${esc(row.mint)}</a></div>
           </td>
           <td>${badge(row.status)}</td>
           <td>${verdictBadge(row.verdict)}</td>
@@ -272,16 +272,21 @@ _DASHBOARD_HTML = """<!doctype html>
         $('detail').style.display = 'block';
         $('detail-kv').innerHTML = `
           <div>Token</div><div><strong>${esc(data.symbol || data.name || data.mint)}</strong></div>
-          <div>Mint</div><div><a href="${esc(dexscreenerUrl(data.mint))}" target="_blank"><code>${esc(data.mint)}</code></a></div>
+          <div>Mint</div><div><a href="${esc(pumpfunUrl(data.mint))}" target="_blank"><code>${esc(data.mint)}</code></a></div>
           <div>Creator</div><div><code>${esc(data.creator || '')}</code></div>
           <div>Status</div><div>${badge(data.status)}</div>
           <div>Verdict</div><div>${verdictBadge(data.verdict)}</div>
+          <div>Alert Tier</div><div>${esc(data.alert_tier || data.score_breakdown?.alert_tier || data.automation?.alert_tier || '')}</div>
           <div>Score</div><div>${esc(data.score ?? '')}</div>
           <div>Discovered</div><div>${esc(data.discovered_at || '')}</div>
           <div>Completed</div><div>${esc(data.completed_at || '')}</div>
           <div>Contract</div><div>${data.contract_found ? `<span class="ok">found</span> <span class="muted">${esc(data.contract_evidence || '')}</span>` : '<span class="bad">missing</span>'}</div>
           <div>URI</div><div><a href="${esc(data.uri || '#')}" target="_blank">${esc(data.uri || '')}</a></div>
         `;
+        const breakdown = data.score_breakdown || data.automation?.score_breakdown || {};
+        if (breakdown && Object.keys(breakdown).length) {
+          $('detail-kv').insertAdjacentHTML('beforeend', `<div>Score Breakdown</div><div>${esc(Object.entries(breakdown).map(([k, v]) => `${k}: ${v}`).join(' • '))}</div>`);
+        }
         const links = [];
         if (data.website) links.push(`<a href="${esc(data.website)}" target="_blank">Website</a>`);
         if (data.twitter) links.push(`<a href="${esc(data.twitter)}" target="_blank">Twitter/X</a>`);

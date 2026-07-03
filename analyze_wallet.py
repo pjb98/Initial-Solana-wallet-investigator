@@ -532,6 +532,127 @@ def find_developer_create_evidence(helius: HeliusClient, developer: str, mint: s
     }
 
 
+def build_developer_cluster(
+    developer: str,
+    events: list[Event],
+    profiles: dict[str, WalletProfile],
+) -> dict[str, Any]:
+    connections: list[dict[str, Any]] = []
+    side_wallets: set[str] = set()
+    proceeds_wallets: set[str] = set()
+    funding_wallets: list[dict[str, Any]] = []
+
+    for profile in profiles.values():
+        if profile.wallet != developer and profile.funder:
+            funding_wallets.append(
+                {
+                    "wallet": profile.wallet,
+                    "funder": profile.funder,
+                    "funder_evidence": profile.funder_evidence,
+                    "confidence": "high" if profile.funder else "unknown",
+                }
+            )
+
+    for event in events:
+        direction = None
+        reason = None
+        if event.kind == "transfer_out" and event.wallet == developer and event.counterparty:
+            side_wallets.add(event.counterparty)
+            direction = "developer_to_side_wallet"
+            reason = "developer sent token to another wallet"
+        elif event.kind == "transfer_in" and event.counterparty and event.counterparty == developer:
+            side_wallets.add(event.wallet)
+            direction = "side_wallet_to_developer"
+            reason = "wallet received token from the developer cluster"
+        elif event.kind == "sale_proceeds" and event.proceeds_destination:
+            proceeds_wallets.add(event.proceeds_destination)
+            direction = "sale_proceeds"
+            reason = "sale proceeds left a selling wallet"
+        elif event.kind == "vault_deposit":
+            direction = "vault_deposit"
+            reason = "tokens were deposited into a vault-like destination"
+
+        if direction:
+            connections.append(
+                {
+                    "signature": event.signature,
+                    "timestamp": event.timestamp,
+                    "asset": event.asset or "token",
+                    "amount": round(event.token_amount or event.sol_amount or 0.0, 6),
+                    "direction": direction,
+                    "from_wallet": event.wallet,
+                    "to_wallet": event.counterparty or event.proceeds_destination,
+                    "reason": reason,
+                    "confidence": event.relationship_confidence,
+                }
+            )
+
+    if developer not in side_wallets:
+        side_wallets.discard(developer)
+    return {
+        "deployer_wallet": developer,
+        "funding_wallets": funding_wallets,
+        "side_wallets": sorted(side_wallets),
+        "proceeds_wallets": sorted(proceeds_wallets),
+        "connections": connections,
+    }
+
+
+def score_wallet_risk(
+    developer: str,
+    events: list[Event],
+    profiles: dict[str, WalletProfile],
+    developer_evidence: dict[str, Any],
+    truncated: bool,
+) -> tuple[int, str, int, str]:
+    risk = 0
+    side_wallets = {e.counterparty for e in events if e.kind == "transfer_out" and e.wallet == developer and e.counterparty}
+    sale_wallets = {e.wallet for e in events if e.kind == "sell" and e.wallet != developer}
+    proceeds_wallets = {e.proceeds_destination for e in events if e.kind == "sale_proceeds" and e.proceeds_destination}
+    common_funders = Counter(profile.funder for profile in profiles.values() if profile.funder)
+    common_funder_count = common_funders.most_common(1)[0][1] if common_funders else 0
+
+    if side_wallets:
+        risk += min(35, len(side_wallets) * 15)
+    if sale_wallets:
+        risk += min(35, len(sale_wallets) * 20)
+    if proceeds_wallets:
+        risk += min(20, len(proceeds_wallets) * 10)
+    if common_funder_count > 1:
+        risk += 15
+    if truncated:
+        risk += 5
+
+    if risk >= 60:
+        label = "high"
+    elif risk >= 25:
+        label = "medium"
+    else:
+        label = "low"
+
+    confidence_score = 0
+    status = developer_evidence.get("status")
+    if status == "Likely":
+        confidence_score += 35
+    elif status == "Unknown":
+        confidence_score += 10
+    if side_wallets:
+        confidence_score += 20
+    if proceeds_wallets:
+        confidence_score += 20
+    if not truncated:
+        confidence_score += 15
+    if any(profile.sold_token for profile in profiles.values()):
+        confidence_score += 10
+    if confidence_score >= 70:
+        confidence = "high"
+    elif confidence_score >= 35:
+        confidence = "medium"
+    else:
+        confidence = "low"
+    return risk, label, confidence_score, confidence
+
+
 def build_report(
     *,
     mint: str,
@@ -547,6 +668,14 @@ def build_report(
     sells = [e for e in all_events if e["kind"] == "sell"]
     transfers_out = [e for e in all_events if e["kind"] == "transfer_out"]
     sale_proceeds = [e for e in all_events if e["kind"] == "sale_proceeds"]
+    developer_cluster = build_developer_cluster(developer, events, profiles)
+    wallet_risk_score, wallet_risk_label, analysis_confidence_score, analysis_confidence = score_wallet_risk(
+        developer,
+        events,
+        profiles,
+        developer_evidence,
+        truncated,
+    )
     wallet_count = len(profiles)
     net_tokens = round(
         sum(e.get("token_amount", 0.0) for e in buys)
@@ -616,6 +745,14 @@ def build_report(
         "assessment": {
             "conclusion": conclusion,
             "confidence": confidence,
+            "wallet_risk": {
+                "score": wallet_risk_score,
+                "label": wallet_risk_label,
+            },
+            "analysis_confidence": {
+                "score": analysis_confidence_score,
+                "label": analysis_confidence,
+            },
             "notes": [
                 "Behavioral evidence is not treated as fraud by itself.",
                 "Token transfer is not classified as a sale unless a swap or exchange-style proceeds event is shown.",
@@ -630,6 +767,7 @@ def build_report(
             "net_cluster_token_change": net_tokens,
         },
         "cluster": cluster,
+        "developer_cluster": developer_cluster,
         "wallets": [
             {
                 **asdict(profile),
@@ -646,6 +784,12 @@ def build_report(
             "confidence": confidence,
             "evidence_count": len(all_events),
         },
+        "risk_summary": {
+            "wallet_risk_score": wallet_risk_score,
+            "wallet_risk_label": wallet_risk_label,
+            "analysis_confidence_score": analysis_confidence_score,
+            "analysis_confidence_label": analysis_confidence,
+        },
         "transactions": all_events,
     }
     return report
@@ -659,6 +803,8 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
         f"- Developer: `{report['developer_wallet']}`",
         f"- Assessment: **{report['assessment']['conclusion']}**",
         f"- Confidence: `{report['assessment']['confidence']}`",
+        f"- Wallet risk: `{report['assessment'].get('wallet_risk', {}).get('label')}`",
+        f"- Analysis confidence: `{report['assessment'].get('analysis_confidence', {}).get('label')}`",
         f"- Generated: `{report['generated_at']}`",
         "",
         "## Developer Attribution",
@@ -682,6 +828,37 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
     else:
         lines.append("- No high-confidence buy/transfer/sale sequence reconstructed from the available history.")
 
+    cluster = report.get("developer_cluster") or {}
+    if cluster:
+        lines += [
+            "",
+            "## Developer Cluster",
+            f"- Deployer wallet: `{cluster.get('deployer_wallet')}`",
+        ]
+        funding_wallets = cluster.get("funding_wallets") or []
+        if funding_wallets:
+            lines.append("- Funding wallets:")
+            for item in funding_wallets[:10]:
+                lines.append(f"  - `{item.get('wallet')}` funded by `{item.get('funder')}`")
+        side_wallets = cluster.get("side_wallets") or []
+        if side_wallets:
+            lines.append("- Side wallets:")
+            for wallet in side_wallets[:10]:
+                lines.append(f"  - `{wallet}`")
+        proceeds_wallets = cluster.get("proceeds_wallets") or []
+        if proceeds_wallets:
+            lines.append("- Proceeds wallets:")
+            for wallet in proceeds_wallets[:10]:
+                lines.append(f"  - `{wallet}`")
+        connections = cluster.get("connections") or []
+        if connections:
+            lines.append("- Connections:")
+            for item in connections[:12]:
+                lines.append(
+                    f"  - `{item.get('from_wallet')}` -> `{item.get('to_wallet')}` "
+                    f"({item.get('direction')}, `{item.get('confidence')}`)"
+                )
+
     project = report.get("project_research")
     if project:
         lines += [
@@ -690,6 +867,52 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
             f"- Utility score: `{project.get('score')}`",
             f"- Verdict: `{project.get('verdict')}`",
         ]
+        deployment = (project.get("score_breakdown") or {}).get("deployment_verification") or {}
+        if deployment:
+            lines.append("- Deployment verification:")
+            lines.append(f"  - claimed: `{deployment.get('claimed')}`")
+            lines.append(f"  - verified: `{deployment.get('verified')}`")
+            if deployment.get("program_count") is not None:
+                lines.append(f"  - program_count: `{deployment.get('program_count')}`")
+            verified_programs = deployment.get("verified_programs") or []
+            for program in verified_programs[:6]:
+                lines.append(
+                    f"  - `{program.get('address')}` executable `{program.get('executable')}` owner `{program.get('owner')}`"
+                )
+                for note in program.get("notes") or []:
+                    lines.append(f"    - {note}")
+        github_repos = project.get("github_repos") or []
+        if github_repos:
+            lines.append("- GitHub repositories:")
+            for repo in github_repos[:8]:
+                repo_line = f"  - `{repo.get('owner')}/{repo.get('repo')}`"
+                if repo.get("created_at"):
+                    repo_line += f" created `{repo.get('created_at')}`"
+                if repo.get("first_commit_at"):
+                    repo_line += f", first commit `{repo.get('first_commit_at')}`"
+                if repo.get("commit_count") is not None:
+                    repo_line += f", commits `{repo.get('commit_count')}`"
+                if repo.get("predates_launch") is not None:
+                    repo_line += f", predates launch `{repo.get('predates_launch')}`"
+                lines.append(repo_line)
+                if repo.get("notes"):
+                    for note in repo.get("notes")[:4]:
+                        lines.append(f"    - {note}")
+        program_snaps = project.get("program_snapshots") or []
+        if program_snaps and not deployment:
+            lines.append("- Program snapshots:")
+            for program in program_snaps[:6]:
+                lines.append(
+                    f"  - `{program.get('address')}` claimed `{program.get('claimed')}` verified `{program.get('verified')}`"
+                )
+                for note in program.get("notes") or []:
+                    lines.append(f"    - {note}")
+        score_breakdown = project.get("score_breakdown") or {}
+        if score_breakdown:
+            lines.append("- Score breakdown:")
+            for key in ("project_relevance", "evidence_quality", "execution_score", "market_risk", "analysis_confidence", "alert_tier"):
+                if key in score_breakdown:
+                    lines.append(f"  - {key}: `{score_breakdown.get(key)}`")
         socials = project.get("socials") or {}
         if socials:
             lines.append("- Socials:")
@@ -711,6 +934,7 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
         "## Notes",
         "- A transfer alone is not treated as a sale.",
         "- Behavioral patterns are evidence, not a fraud verdict.",
+        "- Wallet risk and analysis confidence are tracked separately.",
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -763,6 +987,16 @@ def write_csvs(report: dict[str, Any], out_dir: Path) -> None:
                     "relationship": "token_transfer_then_sale",
                     "evidence": seq.get("transfer_signature"),
                     "confidence": "medium",
+                }
+            )
+        for conn in (report.get("developer_cluster") or {}).get("connections") or []:
+            writer.writerow(
+                {
+                    "from_wallet": conn.get("from_wallet"),
+                    "to_wallet": conn.get("to_wallet"),
+                    "relationship": conn.get("direction"),
+                    "evidence": conn.get("signature"),
+                    "confidence": conn.get("confidence", "unknown"),
                 }
             )
 

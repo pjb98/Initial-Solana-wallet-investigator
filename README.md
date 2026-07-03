@@ -11,6 +11,8 @@ FastAPI service for GPT Actions that traces a developer wallet, follows related 
 
 - `HELIUS_API_KEY` - required for on-chain RPC access
 - `ACTION_SECRET` - bearer secret used by the GPT Action
+- `DISCORD_WEBHOOK_URL` - optional webhook for alerts when a qualifying report completes
+- `TROJAN_TERMINAL_URL_TEMPLATE` - optional hyperlink template included in Discord alerts, defaults to `https://trojan.com/terminal?token={mint}`
 - `INVESTIGATOR_CACHE_PATH` - optional SQLite cache path, defaults to `/tmp/solana-investigator-cache.sqlite`
 - `INVESTIGATOR_MAX_PAGES` - cap on signature pages per wallet, default `8`
 - `INVESTIGATOR_LAUNCH_WINDOW_HOURS` - how far back to look around inferred launch time, default `72`
@@ -102,6 +104,7 @@ This repo now includes a live watcher that:
 - listens for new pump.fun token launches
 - reads token metadata and social links
 - crawls the project website for docs, GitHub, and other useful links
+- prefers Nitter RSS mirrors for X/Twitter accounts and merges mirror feeds to reduce stale-cache noise
 - scores whether the token looks like a utility project
 - runs the full wallet-trace report only on candidates
 
@@ -115,6 +118,8 @@ python auto_utility_scan.py --watch
 Optional environment variables:
 
 - `PUMPPORTAL_API_KEY` - optional, for funded PumpPortal trade streaming
+- `DISCORD_WEBHOOK_URL` - optional Discord webhook for completed utility/infra alerts
+- `TROJAN_TERMINAL_URL_TEMPLATE` - optional Discord alert link template
 - `UTILITY_SCORE_THRESHOLD` - default `6`
 - `UTILITY_CRAWL_PAGES` - default `8`
 - `UTILITY_CRAWL_DEPTH` - default `1`
@@ -129,6 +134,8 @@ Output:
 - `reports/<token>.json`
 - `reports/transactions.csv`
 - `reports/wallet_graph.csv`
+
+Discord alerts are sent only after the watcher completes a qualifying report. Skips and exclusions do not trigger notifications.
 
 If you want a single command:
 
