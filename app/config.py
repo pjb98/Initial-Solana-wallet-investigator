@@ -37,6 +37,8 @@ class Settings:
     ricomaps_api_key: str | None = _env("RICOMAPS_API_KEY")
     action_secret: str | None = _env("ACTION_SECRET")
     discord_webhook_url: str | None = _env("DISCORD_WEBHOOK_URL")
+    discord_v1_alerts_enabled: bool = _bool("DISCORD_V1_ALERTS_ENABLED", True)
+    discord_v2_alerts_enabled: bool = _bool("DISCORD_V2_ALERTS_ENABLED", True)
     trojan_terminal_url_template: str | None = _env(
         "TROJAN_TERMINAL_URL_TEMPLATE",
         "https://trojan.com/terminal?token={mint}",

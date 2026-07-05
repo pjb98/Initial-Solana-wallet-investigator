@@ -443,9 +443,9 @@ async def _handle_token(ricomaps: RicoMapsClient, con: sqlite3.Connection, token
             analysis_json=json.dumps(report),
             completed_at=_now(),
         )
-        if main_eligible:
+        if main_eligible and SETTINGS.discord_v1_alerts_enabled:
             _send_discord_alert(token, research, report, md_path)
-        if v2_eligible:
+        if v2_eligible and SETTINGS.discord_v2_alerts_enabled:
             _send_discord_alert(token, research, report, md_path, version_label="v2")
     except Exception as exc:
         if _is_expected_url_error(exc):

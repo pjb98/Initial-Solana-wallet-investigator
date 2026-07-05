@@ -134,3 +134,8 @@ This file records the work performed in this project folder. It is meant to be a
     - rewired the FastAPI service, CLI, and watcher to use Ricomaps analysis calls
     - disabled Helius-dependent program verification in the live research path
     - updated docs, Render env vars, and the GPT Action schema for the new backend
+
+25. Paused v1 Discord alerts.
+    - added separate toggles for v1 and v2 Discord notifications
+    - set v1 alerts off in the local environment
+    - left v2 alerts enabled
