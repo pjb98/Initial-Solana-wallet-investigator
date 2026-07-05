@@ -15,7 +15,6 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 
-from .helius import HeliusClient
 from .config import SETTINGS
 
 _SESSION = requests.Session()
@@ -169,6 +168,10 @@ SOCIAL_HOSTS = {"x.com", "www.x.com", "twitter.com", "www.twitter.com"}
 NITTER_MIRRORS = (
     "https://nitter.net",
     "https://xcancel.com",
+    "https://nitter.poast.org",
+    "https://nitter.privacydev.net",
+    "https://nitter.1d4.us",
+    "https://nitter.perennialte.ch",
 )
 PROGRAM_CLAIM_PATTERNS = (
     r"\bprogram id\b",
@@ -413,7 +416,7 @@ def _is_candidate_website(url: str | None) -> bool:
     low = url.lower()
     if _is_social_host(url):
         return False
-    if any(host in low for host in ("x.com", "twitter.com", "t.co", "t.me", "telegram.me", "discord.com", "discord.gg", "linktr.ee", "beacons.ai", "bio.link")):
+    if any(host in low for host in ("pump.fun", "pumpportal", "x.com", "twitter.com", "t.co", "t.me", "telegram.me", "discord.com", "discord.gg", "linktr.ee", "beacons.ai", "bio.link")):
         return False
     if any(host in low for host in ("ipfs.io/ipfs", "arweave.net", "cdn.helius-rpc.com", "images.", "image.")):
         return False
@@ -722,41 +725,10 @@ def collect_github_repos(seed_urls: list[str], crawled_pages: list[PageSnapshot]
 
 
 def _verify_program_address(program_address: str, launch_time: str | None = None) -> ProgramSnapshot | None:
-    if not HeliusClient().configured:
-        return None
-    client = HeliusClient()
-    snap = ProgramSnapshot(address=program_address)
-    try:
-        account = client.get_account_info(program_address) or {}
-    except Exception as exc:
-        snap.notes.append(f"account lookup failed: {str(exc)[:120]}")
-        return snap
-    value = account.get("value") if isinstance(account, dict) else None
-    if not value:
-        snap.verified = False
-        snap.notes.append("program account not found")
-        return snap
-    snap.owner = value.get("owner")
-    snap.executable = value.get("executable")
-    snap.lamports = value.get("lamports")
-    snap.verified = bool(value.get("executable")) and bool(value.get("owner"))
-    if snap.verified:
-        snap.notes.append("account is executable and exists on chain")
+    snap = ProgramSnapshot(address=program_address, claimed=True, verified=False)
+    snap.notes.append("on-chain program verification is disabled in the Ricomaps-only backend")
     if launch_time:
-        try:
-            sigs = client.get_signatures_for_address(program_address, limit=1)
-            if sigs:
-                sig = sigs[0]
-                snap.deployment_signature = sig.signature
-                if sig.block_time:
-                    snap.deployment_time = datetime.fromtimestamp(sig.block_time, tz=timezone.utc).isoformat()
-                    launch_dt = datetime.fromisoformat(launch_time.replace("Z", "+00:00"))
-                    deploy_dt = datetime.fromisoformat(snap.deployment_time.replace("Z", "+00:00"))
-                    snap.notes.append(
-                        "program signature predates launch" if deploy_dt <= launch_dt else "program signature after launch"
-                    )
-        except Exception as exc:
-            snap.notes.append(f"deployment lookup failed: {str(exc)[:120]}")
+        snap.notes.append("launch-time comparison not performed without raw RPC access")
     return snap
 
 
@@ -765,8 +737,6 @@ def collect_program_snapshots(
     crawled_pages: list[PageSnapshot],
     launch_time: str | None = None,
 ) -> list[ProgramSnapshot]:
-    if not HeliusClient().configured:
-        return []
     claims = _find_program_claims(metadata, crawled_pages)
     if not claims:
         return []
@@ -1067,6 +1037,10 @@ def _contains_any(text: str, terms: set[str]) -> bool:
 def _keyword_hits(text: str, terms: set[str]) -> list[str]:
     hits = []
     for term in sorted(terms, key=len, reverse=True):
+        if term == "ai":
+            if re.search(r"(?<![a-z0-9])ai(?![a-z0-9])", text):
+                hits.append(term)
+            continue
         if term in text:
             hits.append(term)
     return hits
@@ -1239,32 +1213,35 @@ def _v2_project_signal(
     *,
     contract_found: bool,
     contract_evidence: str | None,
+    socials: dict[str, str | None],
     crawled_pages: list[PageSnapshot],
     github_repos: list[GithubRepoSnapshot],
 ) -> dict[str, Any]:
     sources: list[str] = []
     reasons: list[str] = []
 
-    if github_repos:
-        sources.append("github")
-        reasons.append("GitHub repository discovered")
-
+    website_host = _host_of(socials.get("website"))
+    github_pages: list[str] = []
     docs_pages: list[str] = []
     tweeted_pages: list[str] = []
     for page in crawled_pages:
         page_blob = " ".join(filter(None, [page.title or "", page.description or "", page.text or ""])).lower()
         links_blob = " ".join(page.links).lower()
+        page_host = _host_of(page.url)
         if "/docs" in page.url.lower() or any(term in page_blob for term in ("documentation", "getting started", "how it works", "docs")):
             docs_pages.append(page.url)
+        if page_host and page_host == website_host and "github.com" in links_blob:
+            github_pages.extend([link for link in page.links if "github.com" in link.lower()])
         if _is_social_host(page.url) and (
-            "github" in page_blob
-            or "docs" in page_blob
-            or "github.com" in links_blob
-            or "docs." in links_blob
-            or "/docs" in links_blob
+            "github.com" in links_blob or "docs." in links_blob or "/docs" in links_blob
         ):
             tweeted_pages.append(page.url)
 
+    if github_pages:
+        sources.append("github")
+        reasons.append(f"GitHub repository link found on official site: {github_pages[0]}")
+        if len(github_pages) > 1:
+            reasons.append(f"additional GitHub links on official site: {len(github_pages) - 1}")
     if docs_pages:
         sources.append("docs")
         reasons.append(f"docs/product evidence found on {docs_pages[0]}")
@@ -1287,11 +1264,13 @@ def _v2_project_signal(
             contract_source = "website"
 
     eligible = bool(contract_found and sources and contract_source in {"website", "github", "docs"})
-    alert_tier = "v2 Review" if eligible and (github_repos or docs_pages) else "v2 Watch"
+    label = "V2 Discovery Match - unverified" if eligible else None
+    alert_tier = "Watch" if eligible else None
 
     return {
         "eligible": eligible,
-        "alert_tier": alert_tier if eligible else None,
+        "label": label,
+        "alert_tier": alert_tier,
         "contract_source": contract_source,
         "evidence_sources": sources,
         "reasons": reasons if eligible else [],
@@ -1409,6 +1388,7 @@ def build_project_research(
     v2_signal = _v2_project_signal(
         contract_found=contract_found,
         contract_evidence=contract_evidence,
+        socials=socials,
         crawled_pages=crawled_pages,
         github_repos=github_repos,
     )

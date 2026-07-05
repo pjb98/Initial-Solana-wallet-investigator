@@ -104,3 +104,33 @@ This file records the work performed in this project folder. It is meant to be a
     - kept the existing utility/infra rules in place
     - added a separate v2 gate for GitHub/docs/tweeted evidence plus contract-address evidence
     - labeled Discord, dashboard, and report outputs with v2 when that path fires
+
+19. Expanded Nitter RSS mirror coverage.
+    - added more fallback mirrors for X/Twitter scraping
+    - keep using RSS feeds before any HTML fallback
+    - reduce no-feed outcomes when one mirror is stale or unreachable
+    - added nitter.perennialte.ch as an additional fallback mirror
+
+20. Tightened AI keyword matching.
+    - `AI` now requires standalone word matching instead of substring matching
+    - prevents false positives from words like `again`
+
+21. Clarified documentation and v2 labeling.
+    - added implementation-status labels to the scoring guide
+    - separated live, partial, experimental, and planned features
+    - labeled v2 as a discovery match instead of a higher-confidence review
+    - kept v2 feeding into Watch by default
+
+22. Tightened v2 GitHub qualification.
+    - GitHub now only counts when it appears on the official project site/docs or in a direct tweet reference
+    - third-party pages that merely link to GitHub no longer satisfy v2 GitHub evidence
+
+23. Excluded pump.fun from website credit.
+    - pump.fun and pumpportal links no longer count as candidate websites
+    - prevents launch pages from being mistaken for real project sites
+
+24. Swapped the live on-chain backend to Ricomaps.
+    - added a Ricomaps client and normalized analysis report builder
+    - rewired the FastAPI service, CLI, and watcher to use Ricomaps analysis calls
+    - disabled Helius-dependent program verification in the live research path
+    - updated docs, Render env vars, and the GPT Action schema for the new backend

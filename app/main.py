@@ -1,4 +1,4 @@
-"""FastAPI application for developer wallet tracing."""
+"""FastAPI application for RicoMaps-backed Solana token analysis."""
 
 from __future__ import annotations
 
@@ -13,16 +13,16 @@ from fastapi.staticfiles import StaticFiles
 from .dashboard import get_token, list_tokens
 from .cache import CacheStore
 from .config import BASE_DIR, SETTINGS
-from .helius import HeliusClient
 from .models import AnalyzeRequest, HealthResponse, InvestigationCreateResponse, InvestigationRecord
+from .ricomaps import RicoMapsClient, build_ricomaps_report
 from .security import require_action_secret
-from .tracer import ACTION_VERSION, TraceEngine
+from .tracer import ACTION_VERSION
 
 
 app = FastAPI(
     title="Solana Developer Wallet Investigator",
     version=ACTION_VERSION,
-    description="Deterministic Solana wallet tracing for GPT Actions.",
+    description="RicoMaps-backed Solana token analysis for GPT Actions.",
 )
 
 REPORTS_DIR = BASE_DIR / "reports"
@@ -283,6 +283,7 @@ _DASHBOARD_HTML = """<!doctype html>
           <div>Status</div><div>${badge(data.status)}</div>
           <div>Verdict</div><div>${verdictBadge(data.verdict)}</div>
           <div>V2</div><div>${v2Badge(data.v2?.eligible || data.automation?.v2?.eligible)}</div>
+          <div>V2 Label</div><div>${esc(data.v2_label || data.automation?.v2?.label || '')}</div>
           <div>Alert Tier</div><div>${esc(data.alert_tier || data.score_breakdown?.alert_tier || data.automation?.alert_tier || '')}</div>
           <div>Score</div><div>${esc(data.score ?? '')}</div>
           <div>Discovered</div><div>${esc(data.discovered_at || '')}</div>
@@ -324,8 +325,7 @@ _DASHBOARD_HTML = """<!doctype html>
 </html>"""
 
 cache = CacheStore(SETTINGS.cache_path)
-helius = HeliusClient()
-engine = TraceEngine(helius)
+ricomaps = RicoMapsClient()
 
 
 def _run_analysis(payload: AnalyzeRequest) -> dict[str, Any]:
@@ -334,14 +334,25 @@ def _run_analysis(payload: AnalyzeRequest) -> dict[str, Any]:
     cached = cache.get_analysis(cache_key)
     if cached is not None:
         return cached
-    result = engine.analyze(request_dict)
+    if not ricomaps.configured:
+        raise RuntimeError("RICOMAPS_API_KEY is not configured")
+    if request_dict.get("token_mint"):
+        raw = ricomaps.analyze(request_dict["token_mint"])
+    else:
+        raw = ricomaps.quick_scan(request_dict["developer_wallet"])
+    result = build_ricomaps_report(request=request_dict, payload=raw)
     cache.put_analysis(cache_key, request_dict, result)
     return result
 
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    return HealthResponse(status="ok", service="solana-developer-wallet-investigator", helius_configured=helius.configured)
+    return HealthResponse(
+        status="ok",
+        service="solana-developer-wallet-investigator",
+        ricomaps_configured=ricomaps.configured,
+        helius_configured=False,
+    )
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
@@ -364,20 +375,20 @@ def dashboard_token_detail(mint: str) -> dict[str, Any] | None:
 
 @app.post("/analyze-developer-wallet", dependencies=[Depends(require_action_secret)])
 async def analyze_developer_wallet(payload: AnalyzeRequest) -> dict[str, Any]:
-    if not helius.configured:
+    if not ricomaps.configured:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="HELIUS_API_KEY is not configured",
+            detail="RICOMAPS_API_KEY is not configured",
         )
     return await asyncio.to_thread(_run_analysis, payload)
 
 
 @app.post("/investigations", response_model=InvestigationCreateResponse, dependencies=[Depends(require_action_secret)])
 async def create_investigation(payload: AnalyzeRequest) -> InvestigationCreateResponse:
-    if not helius.configured:
+    if not ricomaps.configured:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="HELIUS_API_KEY is not configured",
+            detail="RICOMAPS_API_KEY is not configured",
         )
     investigation_id = str(uuid.uuid4())
     cache.create_investigation(investigation_id, payload.model_dump())

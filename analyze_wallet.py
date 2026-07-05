@@ -27,6 +27,7 @@ if str(ROOT) not in sys.path:
 
 from app.helius import HeliusClient, SignatureInfo  # noqa: E402
 from app.config import SETTINGS  # noqa: E402
+from app.ricomaps import RicoMapsClient, build_ricomaps_report  # noqa: E402
 
 
 PUBKEY_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
@@ -869,6 +870,8 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
         ]
         v2 = (project.get("score_breakdown") or {}).get("v2") or {}
         if v2:
+            if v2.get("label"):
+                lines.append(f"- V2 label: `{v2.get('label')}`")
             lines.append(f"- V2 eligible: `{v2.get('eligible')}`")
             if v2.get("alert_tier"):
                 lines.append(f"- V2 alert tier: `{v2.get('alert_tier')}`")
@@ -1156,26 +1159,17 @@ def main() -> int:
     if not is_pubkey(args.developer):
         raise SystemExit("invalid --developer public key")
 
-    helius = HeliusClient()
-    if not helius.configured:
-        raise SystemExit("HELIUS_API_KEY is not configured")
+    ricomaps = RicoMapsClient()
+    if not ricomaps.configured:
+        raise SystemExit("RICOMAPS_API_KEY is not configured")
 
-    events, profiles, truncated, developer_evidence, launch_time = collect(
-        helius,
-        args.developer,
-        args.mint,
-        max_depth=args.max_depth,
-        max_pages=args.max_pages,
-        page_limit=args.page_limit,
-    )
-    report = build_report(
-        mint=args.mint,
-        developer=args.developer,
-        events=events,
-        profiles=profiles,
-        truncated=truncated,
-        developer_evidence=developer_evidence,
-        launch_time=launch_time,
+    report = build_ricomaps_report(
+        request={
+            "developer_wallet": args.developer,
+            "token_mint": args.mint,
+            "max_side_wallet_depth": args.max_depth,
+        },
+        payload=ricomaps.analyze(args.mint),
     )
 
     out_dir = ROOT / "reports"

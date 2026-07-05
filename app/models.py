@@ -45,5 +45,5 @@ class InvestigationRecord(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     service: str
-    helius_configured: bool
-
+    ricomaps_configured: bool
+    helius_configured: bool | None = None

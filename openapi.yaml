@@ -24,7 +24,19 @@ paths:
             application/json:
               schema:
                 type: object
-                properties: {}
+                properties:
+                  request:
+                    type: object
+                    additionalProperties: true
+                  developer_attribution:
+                    type: object
+                    additionalProperties: true
+                  summary:
+                    type: object
+                    additionalProperties: true
+                  assessment:
+                    type: object
+                    additionalProperties: true
                 additionalProperties: true
 components:
   securitySchemes:

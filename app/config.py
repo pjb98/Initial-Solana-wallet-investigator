@@ -34,6 +34,7 @@ def _bool(name: str, default: bool = False) -> bool:
 @dataclass(frozen=True)
 class Settings:
     helius_api_key: str | None = _env("HELIUS_API_KEY")
+    ricomaps_api_key: str | None = _env("RICOMAPS_API_KEY")
     action_secret: str | None = _env("ACTION_SECRET")
     discord_webhook_url: str | None = _env("DISCORD_WEBHOOK_URL")
     trojan_terminal_url_template: str | None = _env(
@@ -41,6 +42,7 @@ class Settings:
         "https://trojan.com/terminal?token={mint}",
     )
     pumpportal_api_key: str | None = _env("PUMPPORTAL_API_KEY")
+    ricomaps_base_url: str | None = _env("RICOMAPS_BASE_URL", "https://ricomaps.fun/api/v1")
     cache_path: Path = Path(_env("INVESTIGATOR_CACHE_PATH", "/tmp/solana-investigator-cache.sqlite") or "/tmp/solana-investigator-cache.sqlite")
     request_timeout: float = float(_env("INVESTIGATOR_REQUEST_TIMEOUT", "20") or 20)
     max_pages: int = int(_env("INVESTIGATOR_MAX_PAGES", "3") or 3)
@@ -57,6 +59,10 @@ class Settings:
 
 
 SETTINGS = Settings()
+def pumpportal_ws_url() -> str:
+    if SETTINGS.pumpportal_api_key:
+        return f"{PUMPPORTAL_WS_URL}?api-key={SETTINGS.pumpportal_api_key}"
+    return PUMPPORTAL_WS_URL
 
 
 HELIUS_RPC_URL = (
@@ -64,12 +70,6 @@ HELIUS_RPC_URL = (
     if SETTINGS.helius_api_key
     else None
 )
-
-
-def pumpportal_ws_url() -> str:
-    if SETTINGS.pumpportal_api_key:
-        return f"{PUMPPORTAL_WS_URL}?api-key={SETTINGS.pumpportal_api_key}"
-    return PUMPPORTAL_WS_URL
 
 
 BASE58_PUBLIC_KEY = r"^[1-9A-HJ-NP-Za-km-z]{32,44}$"

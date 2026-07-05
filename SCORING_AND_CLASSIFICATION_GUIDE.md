@@ -12,6 +12,35 @@ This document describes the current behavior of the Solana wallet investigator a
 
 This guide reflects the current implementation in the project folder. It is descriptive, not a promise that every future token will be handled the same way if the rules change.
 
+## 1.1 Implementation Status
+
+Use these status labels to distinguish live behavior from aspirational behavior:
+
+- `Live` = implemented and active in the current code
+- `Partial` = implemented, but still limited or incomplete
+- `Experimental` = present in code, but not yet reliable enough to treat as stable
+- `Planned` = not yet implemented
+
+| Feature | Status |
+| --- | --- |
+| Website filtering for social/community-only links | Live |
+| Meme hashtag hard-fail | Live |
+| TikTok exclusion | Live |
+| GitHub discovery | Live |
+| Docs discovery | Live |
+| Contract-address evidence detection | Live |
+| Nitter RSS social scraping | Live |
+| Wallet tracing and side-wallet detection | Live |
+| Sale-proceeds tracing | Partial |
+| Developer cluster output | Partial |
+| Program deployment verification | Partial |
+| Historical developer clustering across launches | Planned |
+| Repo originality detection | Experimental |
+| API endpoint functionality checks | Planned |
+| Repository-to-live-app validation | Planned |
+| Program binary/repository comparison | Planned |
+| Labeled evaluation dataset | Planned |
+
 ## 1. Core Purpose
 
 The system is designed to separate:
@@ -71,6 +100,8 @@ These are excluded from website credit:
 - `linktr.ee`
 - `beacons.ai`
 - `bio.link`
+- `pump.fun`
+- `pumpportal`
 - social communities or community hub links
 - `/communities/` pages
 - image/CDN/media hosts
@@ -138,6 +169,45 @@ that should count against utility classification.
 ## 6. Words and Phrases That Are Penalized
 
 The scorer does not rely on a single banned-word list. It uses a mix of hard exclusions and negative signals.
+
+Negative signals should be grouped like this:
+
+- Exact hard-fail signals
+- Contextual negative signals
+- Cosmetic signals
+
+### Exact hard-fail signals
+
+Examples:
+
+- explicit `#meme` or `#memes`
+- `this is a memecoin`
+- `no utility`
+- `community takeover meme`
+- obvious meme-token declarations
+
+### Contextual negative signals
+
+Examples:
+
+- `dog`
+- `cat`
+- `frog`
+- `banana`
+- `community`
+- `pump`
+
+These should only count when they appear in clear launch, token, or meme framing.
+
+### Cosmetic signals
+
+Examples:
+
+- animal imagery
+- playful branding
+- joke-style artwork
+
+These should lower confidence slightly, but not dominate if strong technical evidence exists.
 
 ### Strong meme signals
 
@@ -570,21 +640,25 @@ Examples of useful outputs:
 
 The project now has a parallel `v2` path that stays separate from the current utility scoring rules.
 
+`v2` is a discovery path, not a legitimacy verdict.
+
 ### V2 trigger concept
 
 A token can qualify for `v2` alerts when all of the following are true:
 
-1. There is evidence of a GitHub repo, docs page, or tweeted mention of GitHub/docs.
+1. There is evidence of a GitHub repo link on the official site/docs, a docs page on the official site, or a tweeted mention that points to GitHub/docs.
 2. The contract address is found on the website, in GitHub, or in docs.
 
 ### V2 evidence sources
 
 The `v2` path treats these as positive sources:
 
-- GitHub repo discovery
+- GitHub repo link on the official project site/docs
 - docs pages on the project website
 - tweet or social-post text that references GitHub or docs
 - contract evidence found on the website, GitHub, or docs
+
+GitHub references found only on unrelated third-party pages should not count toward v2.
 
 ### V2 alerts
 
@@ -593,6 +667,14 @@ The `v2` path treats these as positive sources:
 - Discord messages
 - the report automation block
 - the dashboard
+
+V2 alerts should be interpreted as:
+
+- `V2 Discovery Match - unverified`
+- useful for discovery
+- not a claim of product quality, legitimacy, or deployment
+
+By default, v2 feeds into `Watch`, not `Review`.
 
 ### V2 does not replace the current rules
 

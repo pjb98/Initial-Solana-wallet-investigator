@@ -81,6 +81,7 @@ def list_tokens(limit: int = 200) -> list[dict[str, Any]]:
                     "score_breakdown": score_breakdown,
                     "alert_tier": (analysis.get("automation") or {}).get("alert_tier"),
                     "v2": v2_signal,
+                    "v2_label": v2_signal.get("label"),
                     "summary": analysis.get("summary") or {},
                 }
             )
@@ -142,6 +143,7 @@ def get_token(mint: str) -> dict[str, Any] | None:
             "score_breakdown": score_breakdown,
             "alert_tier": (analysis.get("automation") or {}).get("alert_tier"),
             "v2": v2_signal,
+            "v2_label": v2_signal.get("label"),
             "report_text": report_text,
         }
     finally:

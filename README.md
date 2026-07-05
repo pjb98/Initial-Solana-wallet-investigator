@@ -9,7 +9,8 @@ FastAPI service for GPT Actions that traces a developer wallet, follows related 
 
 ## Environment
 
-- `HELIUS_API_KEY` - required for on-chain RPC access
+- `RICOMAPS_API_KEY` - required for Ricomaps analysis calls
+- `RICOMAPS_BASE_URL` - optional, defaults to `https://ricomaps.fun/api/v1`
 - `ACTION_SECRET` - bearer secret used by the GPT Action
 - `DISCORD_WEBHOOK_URL` - optional webhook for alerts when a qualifying report completes
 - `TROJAN_TERMINAL_URL_TEMPLATE` - optional hyperlink template included in Discord alerts, defaults to `https://trojan.com/terminal?token={mint}`
@@ -21,7 +22,7 @@ Example local setup:
 
 ```bash
 cp .env.example .env
-export HELIUS_API_KEY=...
+export RICOMAPS_API_KEY=...
 export ACTION_SECRET=...
 ```
 
@@ -31,7 +32,7 @@ export ACTION_SECRET=...
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-export HELIUS_API_KEY=...
+export RICOMAPS_API_KEY=...
 export ACTION_SECRET=...
 uvicorn app.main:app --reload --port 8080
 ```
@@ -44,7 +45,7 @@ Use a bearer token header when configuring the Action:
 Authorization: Bearer <ACTION_SECRET>
 ```
 
-The Helius key stays server-side in `.env` or process environment variables and is never included in GPT instructions.
+The Ricomaps key stays server-side in `.env` or process environment variables and is never included in GPT instructions.
 
 ## Suggested GPT instructions
 
@@ -75,6 +76,10 @@ Use [`openapi.yaml`](./openapi.yaml) directly in the GPT Actions editor.
 For the GPT Action, use only `POST /analyze-developer-wallet`.
 Paste the raw YAML content, not a fenced code block.
 
+## Scoring Guide
+
+See [`SCORING_AND_CLASSIFICATION_GUIDE.md`](./SCORING_AND_CLASSIFICATION_GUIDE.md) for the full scoring, penalties, exclusions, and `v2` rules.
+
 ## Render deploy
 
 1. Push this folder to a GitHub repo.
@@ -82,7 +87,7 @@ Paste the raw YAML content, not a fenced code block.
 3. Choose `Docker` as the environment.
 4. Leave the start command as the Dockerfile command.
 5. Add environment variables:
-   - `HELIUS_API_KEY`
+   - `RICOMAPS_API_KEY`
    - `ACTION_SECRET`
 6. Deploy the service.
 7. Copy the service URL Render assigns, such as `https://your-service.onrender.com`.

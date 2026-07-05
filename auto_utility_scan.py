@@ -27,10 +27,10 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from analyze_wallet import build_report, collect, write_csvs, write_markdown  # noqa: E402
+from analyze_wallet import write_csvs, write_markdown  # noqa: E402
 from app.config import BASE_DIR, SETTINGS, pumpportal_ws_url  # noqa: E402
-from app.helius import HeliusClient  # noqa: E402
 from app.project_research import build_project_research, fetch_json_metadata  # noqa: E402
+from app.ricomaps import RicoMapsClient, build_ricomaps_report  # noqa: E402
 
 
 WATCH_DB = BASE_DIR / "data" / "utility_watch.sqlite"
@@ -201,7 +201,7 @@ def _token_metadata(token: ObservedToken) -> dict[str, Any]:
 
 
 def _analysis_for_token(
-    helius: HeliusClient,
+    ricomaps: RicoMapsClient,
     token: ObservedToken,
     metadata: dict[str, Any],
 ) -> dict[str, Any]:
@@ -228,25 +228,18 @@ def _analysis_for_token(
             "v2_eligible": v2_eligible,
         }
 
-    if not token.creator:
-        raise RuntimeError("utility candidate found but creator wallet is missing")
+    if not ricomaps.configured:
+        raise RuntimeError("RICOMAPS_API_KEY is not configured")
 
-    events, profiles, truncated, developer_evidence, launch_time = collect(
-        helius,
-        token.creator,
-        token.mint,
-        max_depth=SETTINGS.utility_analysis_depth,
-        max_pages=SETTINGS.utility_analysis_pages,
-        page_limit=1000,
-    )
-    report = build_report(
-        mint=token.mint,
-        developer=token.creator,
-        events=events,
-        profiles=profiles,
-        truncated=truncated,
-        developer_evidence=developer_evidence,
-        launch_time=launch_time,
+    report = build_ricomaps_report(
+        request={
+            "developer_wallet": token.creator,
+            "token_mint": token.mint,
+            "max_side_wallet_depth": SETTINGS.utility_analysis_depth,
+        },
+        payload=ricomaps.analyze(token.mint),
+        research=research.as_dict(),
+        token_metadata=metadata,
     )
     breakdown = research.score_breakdown or {}
     report["project_research"] = research.as_dict()
@@ -374,6 +367,8 @@ def _send_discord_alert(
     if version_label or v2_signal.get("eligible"):
         fields.append({"name": "Classification Version", "value": version_label or "current", "inline": True})
     if v2_signal.get("eligible"):
+        if v2_signal.get("label"):
+            fields.append({"name": "V2 Label", "value": str(v2_signal.get("label")), "inline": False})
         fields.append({"name": "V2 Evidence", "value": ", ".join(v2_signal.get("evidence_sources") or []) or "present", "inline": True})
     for label, key in (("Website", "website"), ("Twitter", "twitter"), ("Telegram", "telegram")):
         value = socials.get(key) if isinstance(socials, dict) else None
@@ -418,12 +413,12 @@ def _is_expected_url_error(exc: Exception) -> bool:
     )
 
 
-async def _handle_token(helius: HeliusClient, con: sqlite3.Connection, token: ObservedToken) -> None:
+async def _handle_token(ricomaps: RicoMapsClient, con: sqlite3.Connection, token: ObservedToken) -> None:
     if _already_seen(con, token.mint):
         return
     metadata = _token_metadata(token)
     try:
-        result = await asyncio.to_thread(_analysis_for_token, helius, token, metadata)
+        result = await asyncio.to_thread(_analysis_for_token, ricomaps, token, metadata)
         research = result["research"]
         report = result["report"]
         main_eligible = bool(result.get("main_eligible"))
@@ -467,7 +462,7 @@ async def _handle_token(helius: HeliusClient, con: sqlite3.Connection, token: Ob
         print(f"[error] {token.mint}: {str(exc)[:140]}")
 
 
-async def _stream_new_tokens(helius: HeliusClient, con: sqlite3.Connection) -> None:
+async def _stream_new_tokens(ricomaps: RicoMapsClient, con: sqlite3.Connection) -> None:
     uri = pumpportal_ws_url()
     print(f"[watch] connecting to {uri}")
     while True:
@@ -486,7 +481,7 @@ async def _stream_new_tokens(helius: HeliusClient, con: sqlite3.Connection) -> N
                     token = _parse_new_token(msg)
                     if not token:
                         continue
-                    await _handle_token(helius, con, token)
+                    await _handle_token(ricomaps, con, token)
         except Exception as exc:
             print(f"[watch] reconnect after error: {str(exc)[:120]}")
             await asyncio.sleep(3.0)
@@ -501,15 +496,15 @@ def main() -> int:
     parser.add_argument("--watch", action="store_true", help="Keep watching PumpPortal for new launches.")
     args = parser.parse_args()
 
-    helius = HeliusClient()
-    if not helius.configured:
-        raise SystemExit("HELIUS_API_KEY is not configured")
+    ricomaps = RicoMapsClient()
+    if not ricomaps.configured:
+        raise SystemExit("RICOMAPS_API_KEY is not configured")
 
     con = _connect()
     try:
         if not args.watch:
             args.watch = True
-        asyncio.run(_stream_new_tokens(helius, con))
+        asyncio.run(_stream_new_tokens(ricomaps, con))
     finally:
         con.close()
     return 0
